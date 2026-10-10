@@ -1,0 +1,491 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="52 12 1068 556" width="1068" height="556" role="img" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="classic" data-quality-profile="showcase" data-theme="light">
+  <style><![CDATA[
+:root,[data-theme="light"]{--bg:#f8fafc;--grid:#e2e8f0;--text:#0f172a;--text-muted:#64748b;--text-dim:#94a3b8;--text-faint:#64748b;--panel:#ffffff;--panel-border:#e2e8f0;--lane-fill:rgba(248,250,252,0.65);--lane-stroke:#cbd5e1;--arrow:#94a3b8;--arrow-emphasis:#059669;--mask:#ffffff;--frontend-fill:rgba(34,211,238,0.15);--frontend-stroke:#0891b2;--backend-fill:rgba(52,211,153,0.18);--backend-stroke:#059669;--database-fill:rgba(167,139,250,0.2);--database-stroke:#7c3aed;--cloud-fill:rgba(251,191,36,0.18);--cloud-stroke:#d97706;--security-fill:rgba(251,113,133,0.15);--security-stroke:#e11d48;--messagebus-fill:rgba(251,146,60,0.15);--messagebus-stroke:#ea580c;--external-fill:rgba(148,163,184,0.18);--external-stroke:#64748b}
+.semantic-lens{position: absolute;
+      right: 1rem;
+      bottom: 4.15rem;
+      z-index: 24;
+      width: min(20rem, calc(100% - 2rem));
+      overflow: hidden;
+      border: 1px solid color-mix(in srgb, var(--database-stroke) 58%, var(--toolbar-border));
+      border-radius: 0.82rem;
+      background:
+        linear-gradient(135deg, color-mix(in srgb, var(--database-fill) 34%, transparent), transparent 48%),
+        var(--toolbar-menu-bg);
+      color: var(--toolbar-text);
+      box-shadow: 0 18px 52px rgba(0, 0, 0, 0.36);
+      backdrop-filter: blur(18px);
+      animation: archify-lens-in 180ms cubic-bezier(0.22, 1, 0.36, 1);}
+.semantic-lens-head{display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: start;
+      gap: 0.75rem;
+      padding: 0.72rem 0.78rem 0.62rem;
+      border-bottom: 1px solid var(--toolbar-border);}
+.semantic-lens-eyebrow{display: block;
+      color: var(--database-stroke);
+      font-size: 0.5rem;
+      font-weight: 800;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;}
+.semantic-lens-title{display: block;
+      margin-top: 0.16rem;
+      color: var(--text);
+      font-size: 0.82rem;
+      letter-spacing: -0.02em;}
+.semantic-lens-close{width: 1.75rem;
+      height: 1.75rem;
+      padding: 0;
+      border: 0;
+      border-radius: 0.35rem;
+      background: transparent;
+      color: var(--toolbar-text);
+      font: inherit;
+      font-size: 1rem;
+      cursor: pointer;}
+.semantic-lens-close:hover, .semantic-lens-close:focus-visible{background: var(--toolbar-hover);}
+.semantic-lens-instruction{margin: 0;
+      padding: 0.52rem 0.78rem 0.48rem;
+      color: var(--text-faint);
+      font-size: 0.55rem;
+      line-height: 1.45;}
+.semantic-lens-kinds{display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.3rem;
+      max-height: min(15rem, 40vh);
+      padding: 0 0.5rem 0.5rem;
+      overflow-y: auto;
+      scrollbar-width: thin;}
+.semantic-lens-kind{--lens-color: var(--external-stroke);
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 0.42rem;
+      min-width: 0;
+      min-height: 2.15rem;
+      padding: 0.35rem 0.42rem;
+      border: 1px solid color-mix(in srgb, var(--lens-color) 24%, var(--toolbar-border));
+      border-radius: 0.45rem;
+      background: color-mix(in srgb, var(--panel) 76%, transparent);
+      color: var(--toolbar-text);
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+      transition: border-color 140ms ease, background 140ms ease, opacity 140ms ease;}
+.semantic-lens-kind:focus-visible, .semantic-lens-close:focus-visible, .semantic-lens-actions button:focus-visible{outline: 2px solid var(--database-stroke);
+      outline-offset: 1px;}
+.semantic-lens-kind:disabled{opacity: 0.34; cursor: default;}
+.semantic-lens-swatch{width: 0.48rem;
+      height: 0.48rem;
+      border-radius: 50%;
+      background: var(--lens-color);
+      box-shadow: 0 0 8px color-mix(in srgb, var(--lens-color) 58%, transparent);}
+.semantic-lens-kind strong{overflow: hidden;
+      color: var(--text);
+      font-size: 0.61rem;
+      text-overflow: ellipsis;
+      white-space: nowrap;}
+.semantic-lens-kind em{color: var(--lens-color);
+      font-size: 0.54rem;
+      font-style: normal;
+      font-weight: 800;}
+.semantic-lens-status{min-height: 2.5rem;
+      margin: 0;
+      padding: 0.55rem 0.78rem;
+      border-top: 1px solid var(--toolbar-border);
+      color: var(--text-faint);
+      font-size: 0.55rem;
+      line-height: 1.45;}
+.semantic-lens-status strong{color: var(--database-stroke); font-weight: 800;}
+.semantic-lens-actions{display: flex;
+      justify-content: flex-end;
+      gap: 0.28rem;
+      padding: 0 0.62rem 0.62rem;}
+.semantic-lens-actions button{min-height: 1.8rem;
+      padding: 0.28rem 0.48rem;
+      border: 0;
+      border-radius: 0.35rem;
+      background: transparent;
+      color: var(--toolbar-text);
+      font: inherit;
+      font-size: 0.56rem;
+      cursor: pointer;}
+.semantic-lens-actions button:hover{background: var(--toolbar-hover);}
+.semantic-lens-actions #semantic-lens-copy{color: var(--database-stroke);}
+.semantic-passport-detail{display: block;
+      margin-top: 0.12rem;
+      overflow: hidden;
+      color: var(--text-muted);
+      font-size: 0.625rem;
+      line-height: 1.4;
+      text-overflow: ellipsis;
+      white-space: nowrap;}
+.semantic-passport-meta{display: flex;
+      flex-wrap: wrap;
+      gap: 0.24rem;
+      margin-top: 0.42rem;}
+.semantic-passport-meta span, .semantic-passport-meta code{max-width: 100%;
+      overflow: hidden;
+      padding: 0.14rem 0.34rem;
+      border: 1px solid color-mix(in srgb, var(--toolbar-border) 82%, transparent);
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--panel) 68%, transparent);
+      color: var(--text-faint);
+      font: inherit;
+      font-size: 0.5rem;
+      letter-spacing: 0.04em;
+      text-overflow: ellipsis;
+      white-space: nowrap;}
+.semantic-passport-evidence{margin-top: 0.52rem;
+      padding: 0.5rem;
+      border: 1px solid color-mix(in srgb, var(--backend-stroke) 32%, var(--toolbar-border));
+      border-radius: 0.55rem;
+      background: color-mix(in srgb, var(--backend-fill) 18%, var(--panel));}
+.semantic-passport-evidence-head{display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.55rem;
+      margin-bottom: 0.35rem;}
+.semantic-passport-evidence-status{display: inline-flex;
+      align-items: center;
+      gap: 0.28rem;
+      color: var(--backend-stroke);
+      font-size: 0.5rem;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;}
+.semantic-passport-evidence-status::before{content: '';
+      width: 0.38rem;
+      height: 0.38rem;
+      border-radius: 50%;
+      background: var(--backend-stroke);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--backend-stroke) 14%, transparent);}
+.semantic-passport-repository{min-width: 0;
+      overflow: hidden;
+      color: var(--text-faint);
+      font-size: 0.5rem;
+      text-decoration: none;
+      text-overflow: ellipsis;
+      white-space: nowrap;}
+.semantic-passport-repository:hover, .semantic-passport-repository:focus-visible{color: var(--backend-stroke);}
+.semantic-passport-evidence-links{display: grid; gap: 0.22rem;}
+.semantic-passport-source{display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 0.15rem 0.45rem;
+      align-items: center;
+      padding: 0.34rem 0.4rem;
+      border: 1px solid transparent;
+      border-radius: 0.38rem;
+      color: var(--text-muted);
+      text-decoration: none;}
+.semantic-passport-source:hover, .semantic-passport-source:focus-visible{border-color: color-mix(in srgb, var(--backend-stroke) 42%, transparent);
+      background: color-mix(in srgb, var(--backend-fill) 32%, transparent);
+      color: var(--text);}
+.semantic-passport-source strong{overflow: hidden;
+      font-size: 0.5625rem;
+      text-overflow: ellipsis;
+      white-space: nowrap;}
+.semantic-passport-source code{color: var(--backend-stroke);
+      font: inherit;
+      font-size: 0.5rem;}
+.semantic-passport-source small{grid-column: 1 / -1;
+      overflow: hidden;
+      color: var(--text-faint);
+      font-size: 0.5rem;
+      text-overflow: ellipsis;
+      white-space: nowrap;}
+.semantic-passport-reach{display: grid;
+      gap: 0.28rem;
+      margin-top: 0.52rem;
+      padding-top: 0.48rem;
+      border-top: 1px solid color-mix(in srgb, var(--toolbar-border) 76%, transparent);}
+.semantic-passport-reach-label{color: var(--text-faint);
+      font-size: 0.5rem;
+      font-weight: 800;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;}
+.semantic-passport-reach-actions{display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.25rem;}
+.semantic-passport-reach-actions button{display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.5rem;
+      min-width: 0;
+      min-height: 2rem;
+      padding: 0.32rem 0.42rem;
+      border: 1px solid color-mix(in srgb, var(--toolbar-border) 86%, transparent);
+      background: color-mix(in srgb, var(--panel) 70%, transparent);
+      color: var(--text-muted);
+      text-align: left;}
+.semantic-passport-reach-actions button:hover:not(:disabled), .semantic-passport-reach-actions button:focus-visible{border-color: color-mix(in srgb, var(--frontend-stroke) 62%, var(--toolbar-border));
+      color: var(--text);}
+.semantic-passport-reach-actions button:focus-visible{outline: 2px solid var(--frontend-stroke);
+      outline-offset: 1px;}
+.semantic-passport-reach-actions button:disabled{cursor: default;
+      opacity: 0.5;}
+.semantic-passport-reach-actions strong{color: var(--reach-color, var(--frontend-stroke));
+      font-size: 0.625rem;}
+.semantic-passport-reach-status{color: var(--text-faint);
+      font-size: 0.525rem;
+      line-height: 1.4;}
+.semantic-lens-overlay{display: none !important;}
+.semantic-lens{right: 0.5rem;
+        bottom: 3.7rem;
+        width: calc(100% - 1rem);
+        max-height: calc(100% - 4.2rem);}
+.semantic-lens-kinds{max-height: min(12rem, 34vh);}
+.c-grid{stroke: var(--grid); fill: none;}
+.c-mask{fill: var(--mask); stroke: none;}
+.c-frontend{fill: var(--frontend-fill);   stroke: var(--frontend-stroke);}
+.c-backend{fill: var(--backend-fill);    stroke: var(--backend-stroke);}
+.c-database{fill: var(--database-fill);   stroke: var(--database-stroke);}
+.c-cloud{fill: var(--cloud-fill);      stroke: var(--cloud-stroke);}
+.c-security{fill: var(--security-fill);   stroke: var(--security-stroke);}
+.c-messagebus{fill: var(--messagebus-fill); stroke: var(--messagebus-stroke);}
+.c-external{fill: var(--external-fill);   stroke: var(--external-stroke);}
+.t-primary{fill: var(--text);}
+.t-muted{fill: var(--text-muted);}
+.t-dim{fill: var(--text-dim);}
+.t-frontend{fill: var(--frontend-stroke);}
+.t-backend{fill: var(--backend-stroke);}
+.t-database{fill: var(--database-stroke);}
+.t-cloud{fill: var(--cloud-stroke);}
+.t-security{fill: var(--security-stroke);}
+.t-messagebus{fill: var(--messagebus-stroke);}
+.t-external{fill: var(--external-stroke);}
+svg .semantic-sigil{fill: none;
+      stroke: currentColor;
+      stroke-width: 1.35;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      opacity: 0.76;
+      pointer-events: none;}
+svg .semantic-sigil > *{vector-effect: non-scaling-stroke;}
+svg .semantic-sigil .sigil-fill{fill: currentColor; stroke: none;}
+.a-default{stroke: var(--arrow); fill: none;}
+.a-emphasis{stroke: var(--arrow-emphasis); fill: none;}
+.a-security{stroke: var(--security-stroke); fill: none; stroke-dasharray: 5,5;}
+.a-dashed{stroke: var(--database-stroke); fill: none; stroke-dasharray: 4,4;}
+.m-default{fill: var(--arrow);}
+.m-emphasis{fill: var(--arrow-emphasis);}
+.m-security{fill: var(--security-stroke);}
+.m-dashed{fill: var(--database-stroke);}
+.semantic-lens-overlay{pointer-events: none;}
+.semantic-lens-flow{fill: none;
+      stroke-width: 3.05;
+      stroke-linecap: round;
+      stroke-dasharray: 0.075 0.925;
+      stroke-dashoffset: 0;
+      vector-effect: non-scaling-stroke;
+      opacity: 0.9;
+      animation: archify-semantic-lens-flow 1.35s linear 1 both;
+      animation-delay: var(--lens-flow-delay, 0s);}
+.semantic-flow-token{color: var(--frontend-stroke);
+      opacity: 0;
+      pointer-events: none;}
+.semantic-flow-token-halo{fill: var(--mask);
+      stroke: currentColor;
+      stroke-width: 1.1;
+      vector-effect: non-scaling-stroke;
+      opacity: 0.96;}
+.c-security-group{fill: transparent; stroke: var(--security-stroke); stroke-dasharray: 4,4;}
+.c-region{fill: rgba(251, 191, 36, 0.05); stroke: var(--cloud-stroke); stroke-dasharray: 8,4;}
+.c-lane{fill: var(--lane-fill); stroke: var(--lane-stroke); stroke-dasharray: 6,6;}
+.semantic-lens-flow{animation: none !important;
+        stroke-dasharray: none;
+        stroke-width: 2.2;
+        opacity: 0.34;
+        filter: none;}
+]]></style>
+  <rect x="52" y="12" width="1068" height="556" fill="var(--bg)"/>
+        <title id="archify-diagram-title">KEDA 怎样把 Redis 队列长度变成副本数</title>
+        <desc id="archify-diagram-description">A architecture diagram generated by Archify.</desc>
+        <!-- Definitions -->
+        <defs>
+          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-default" />
+          </marker>
+          <marker id="arrowhead-emphasis" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-emphasis" />
+          </marker>
+          <marker id="arrowhead-security" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-security" />
+          </marker>
+          <marker id="arrowhead-dashed" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-dashed" />
+          </marker>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" class="c-grid" stroke-width="0.5"/>
+          </pattern>
+        </defs>
+
+        <!-- Background Grid -->
+        <rect x="52" y="12" width="1068" height="556" fill="url(#grid)" />
+
+        <!-- Boundaries (behind everything) -->
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="region" data-composition-frame-id="0" x="300" y="32" width="800" height="516" rx="12" class="c-region" stroke-width="1"/>
+        <text x="308" y="50" class="t-cloud" font-size="9" font-weight="600">kind 集群 k8s-lab</text>
+
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="region" data-composition-frame-id="1" x="326" y="58" width="748" height="110" rx="12" class="c-region" stroke-width="1"/>
+        <text x="334" y="76" class="t-cloud" font-size="9" font-weight="600">命名空间 keda</text>
+
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="security-group" data-composition-frame-id="2" x="610" y="248" width="464" height="300" rx="8" class="c-security-group" stroke-width="1"/>
+        <text x="618" y="266" class="t-security" font-size="9" font-weight="600">控制面</text>
+
+        <!-- Connection paths (before components for correct z-order) -->
+        <path data-edge-from="operator" data-edge-to="redis" data-edge-label="LLEN" data-edge-key="0" data-edge-id="llen" data-composition-points="356,111;192,111" d="M 356 111 L 192 111" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="operator" data-edge-to="deploy" data-edge-label="scale 0↔1" data-edge-key="1" data-edge-id="scale-zero" data-composition-points="416,148;416,278" d="M 416 148 L 416 278" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="hpa" data-edge-to="apiserver" data-edge-label="s0-redis-orders" data-edge-key="2" data-edge-id="query-metric" data-composition-points="760,498;842,498;842,315;924,315" d="M 760 498 L 834 498 Q 842 498 842 490 L 842 323 Q 842 315 850 315 L 924 315" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="apiserver" data-edge-to="metrics" data-edge-label="APIService" data-edge-key="3" data-edge-id="apiservice" data-composition-points="924,301;842,301;842,118;760,118" d="M 924 301 L 850 301 Q 842 301 842 293 L 842 126 Q 842 118 834 118 L 760 118" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="metrics" data-edge-to="operator" data-edge-label="gRPC :9666" data-edge-key="4" data-edge-id="grpc" data-composition-points="640,118;476,118" d="M 640 118 L 476 118" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="hpa" data-edge-to="deploy" data-edge-label="scale 1↔N" data-edge-key="5" data-edge-id="scale-n" data-composition-points="640,498;558,498;558,308;476,308" d="M 640 498 L 566 498 Q 558 498 558 490 L 558 316 Q 558 308 550 308 L 476 308" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="worker" data-edge-to="redis" data-edge-label="BLPOP" data-edge-key="6" data-edge-id="blpop" data-composition-points="356,498;274,498;274,125;192,125" d="M 356 498 L 282 498 Q 274 498 274 490 L 274 133 Q 274 125 266 125 L 192 125" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="admission" data-edge-to="apiserver" data-edge-label="校验 ScaledObject" data-edge-key="7" data-edge-id="admit" data-composition-points="984,148;984,278" d="M 984 148 L 984 278" class="a-security" stroke-width="1.5" marker-end="url(#arrowhead-security)"/>
+        <path data-edge-from="apiserver" data-edge-to="etcd" data-edge-label="写入" data-edge-key="8" data-edge-id="persist" data-composition-points="984,338;984,468" d="M 984 338 L 984 468" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+        <!-- Components -->
+        <g id="node-redis" data-node-id="redis" data-node-label="Redis List" tabindex="0" role="button" aria-label="Focus Redis List, orders, Architecture component" aria-pressed="false" data-node-kind="external" data-node-sublabel="orders" data-node-tag="Docker" data-node-context="Architecture component">
+          <title>Redis List · orders · Architecture component · Docker</title>
+          <rect x="72" y="88" width="120" height="60" rx="6" class="c-mask"/>
+          <rect x="72" y="88" width="120" height="60" rx="6" class="c-external" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(78 94) scale(0.6875)">
+            <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
+            <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
+          </g>
+          <text x="132" y="116" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Redis List</text>
+        <text data-detail="context" x="132" y="132" class="t-muted" font-size="9" text-anchor="middle">orders</text>
+        <text data-detail="fine" x="132" y="140" class="t-external" font-size="7" text-anchor="middle">Docker</text>
+        </g>
+
+        <g id="node-operator" data-node-id="operator" data-node-label="keda-operator" tabindex="0" role="button" aria-label="Focus keda-operator, scaler 与 scale loop, kind 集群 k8s-lab › 命名空间 keda" aria-pressed="false" data-node-kind="backend" data-node-sublabel="scaler 与 scale loop" data-node-tag=":9666" data-node-context="kind 集群 k8s-lab › 命名空间 keda">
+          <title>keda-operator · scaler 与 scale loop · kind 集群 k8s-lab › 命名空间 keda · :9666</title>
+          <rect x="356" y="88" width="120" height="60" rx="6" class="c-mask"/>
+          <rect x="356" y="88" width="120" height="60" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(362 94) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text x="416" y="116" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">keda-operator</text>
+        <text data-detail="context" x="416" y="132" class="t-muted" font-size="9" text-anchor="middle">scaler 与 scale loop</text>
+        <text data-detail="fine" x="416" y="140" class="t-backend" font-size="7" text-anchor="middle">:9666</text>
+        </g>
+
+        <g id="node-metrics" data-node-id="metrics" data-node-label="metrics-apiserver" tabindex="0" role="button" aria-label="Focus metrics-apiserver, external.metrics.k8s.io, kind 集群 k8s-lab › 命名空间 keda" aria-pressed="false" data-node-kind="backend" data-node-sublabel="external.metrics.k8s.io" data-node-context="kind 集群 k8s-lab › 命名空间 keda">
+          <title>metrics-apiserver · external.metrics.k8s.io · kind 集群 k8s-lab › 命名空间 keda</title>
+          <rect x="640" y="88" width="120" height="60" rx="6" class="c-mask"/>
+          <rect x="640" y="88" width="120" height="60" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(646 94) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text x="700" y="116" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">metrics-apiserver</text>
+        <text data-detail="context" x="700" y="132" class="t-muted" font-size="8.1" text-anchor="middle">external.metrics.k8s.io</text>
+        </g>
+
+        <g id="node-admission" data-node-id="admission" data-node-label="admission webhook" tabindex="0" role="button" aria-label="Focus admission webhook, vscaledobject.kb.io, kind 集群 k8s-lab › 命名空间 keda" aria-pressed="false" data-node-kind="security" data-node-sublabel="vscaledobject.kb.io" data-node-context="kind 集群 k8s-lab › 命名空间 keda">
+          <title>admission webhook · vscaledobject.kb.io · kind 集群 k8s-lab › 命名空间 keda</title>
+          <rect x="924" y="88" width="120" height="60" rx="6" class="c-mask"/>
+          <rect x="924" y="88" width="120" height="60" rx="6" class="c-security" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(930 94) scale(0.6875)">
+            <path d="M8 2.2 13 4v3.5c0 3.1-1.8 5.4-5 6.5-3.2-1.1-5-3.4-5-6.5V4Z"/>
+            <path d="m5.8 8 1.5 1.5 3-3"/>
+          </g>
+          <text x="984" y="116" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">admission webhook</text>
+        <text data-detail="context" x="984" y="132" class="t-muted" font-size="9" text-anchor="middle">vscaledobject.kb.io</text>
+        </g>
+
+        <g id="node-deploy" data-node-id="deploy" data-node-label="Deployment /scale" tabindex="0" role="button" aria-label="Focus Deployment /scale, order-worker, kind 集群 k8s-lab" aria-pressed="false" data-node-kind="backend" data-node-sublabel="order-worker" data-node-context="kind 集群 k8s-lab">
+          <title>Deployment /scale · order-worker · kind 集群 k8s-lab</title>
+          <rect x="356" y="278" width="120" height="60" rx="6" class="c-mask"/>
+          <rect x="356" y="278" width="120" height="60" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(362 284) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text x="416" y="306" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Deployment /scale</text>
+        <text data-detail="context" x="416" y="322" class="t-muted" font-size="9" text-anchor="middle">order-worker</text>
+        </g>
+
+        <g id="node-apiserver" data-node-id="apiserver" data-node-label="kube-apiserver" tabindex="0" role="button" aria-label="Focus kube-apiserver, 聚合外部指标, kind 集群 k8s-lab › 控制面" aria-pressed="false" data-node-kind="backend" data-node-sublabel="聚合外部指标" data-node-context="kind 集群 k8s-lab › 控制面">
+          <title>kube-apiserver · 聚合外部指标 · kind 集群 k8s-lab › 控制面</title>
+          <rect x="924" y="278" width="120" height="60" rx="6" class="c-mask"/>
+          <rect x="924" y="278" width="120" height="60" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(930 284) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text x="984" y="306" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">kube-apiserver</text>
+        <text data-detail="context" x="984" y="322" class="t-muted" font-size="9" text-anchor="middle">聚合外部指标</text>
+        </g>
+
+        <g id="node-worker" data-node-id="worker" data-node-label="消费者 Pod" tabindex="0" role="button" aria-label="Focus 消费者 Pod, order-worker, kind 集群 k8s-lab" aria-pressed="false" data-node-kind="backend" data-node-sublabel="order-worker" data-node-context="kind 集群 k8s-lab">
+          <title>消费者 Pod · order-worker · kind 集群 k8s-lab</title>
+          <rect x="356" y="468" width="120" height="60" rx="6" class="c-mask"/>
+          <rect x="356" y="468" width="120" height="60" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(362 474) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text x="416" y="496" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">消费者 Pod</text>
+        <text data-detail="context" x="416" y="512" class="t-muted" font-size="9" text-anchor="middle">order-worker</text>
+        </g>
+
+        <g id="node-hpa" data-node-id="hpa" data-node-label="HPA 控制器" tabindex="0" role="button" aria-label="Focus HPA 控制器, kube-controller-manager, kind 集群 k8s-lab › 控制面" aria-pressed="false" data-node-kind="backend" data-node-sublabel="kube-controller-manager" data-node-context="kind 集群 k8s-lab › 控制面">
+          <title>HPA 控制器 · kube-controller-manager · kind 集群 k8s-lab › 控制面</title>
+          <rect x="640" y="468" width="120" height="60" rx="6" class="c-mask"/>
+          <rect x="640" y="468" width="120" height="60" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(646 474) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text x="700" y="496" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">HPA 控制器</text>
+        <text data-detail="context" x="700" y="512" class="t-muted" font-size="8.1" text-anchor="middle">kube-controller-manager</text>
+        </g>
+
+        <g id="node-etcd" data-node-id="etcd" data-node-label="etcd" tabindex="0" role="button" aria-label="Focus etcd, ScaledObject 与 HPA, kind 集群 k8s-lab › 控制面" aria-pressed="false" data-node-kind="database" data-node-sublabel="ScaledObject 与 HPA" data-node-context="kind 集群 k8s-lab › 控制面">
+          <title>etcd · ScaledObject 与 HPA · kind 集群 k8s-lab › 控制面</title>
+          <rect x="924" y="468" width="120" height="60" rx="6" class="c-mask"/>
+          <rect x="924" y="468" width="120" height="60" rx="6" class="c-database" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(930 474) scale(0.6875)">
+            <ellipse cx="8" cy="4" rx="5" ry="2"/>
+            <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
+          </g>
+          <text x="984" y="496" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">etcd</text>
+        <text data-detail="context" x="984" y="512" class="t-muted" font-size="9" text-anchor="middle">ScaledObject 与 HPA</text>
+        </g>
+
+        <!-- Connection labels -->
+        <g data-detail="context" data-edge-from="operator" data-edge-to="redis" data-edge-label="LLEN" data-edge-key="0" data-edge-id="llen">
+          <rect x="259" y="91" width="30" height="14" rx="3" class="c-mask"/>
+          <text x="274" y="101" class="t-backend" font-size="8" text-anchor="middle">LLEN</text>
+        </g>
+        <g data-detail="context" data-edge-from="operator" data-edge-to="deploy" data-edge-label="scale 0↔1" data-edge-key="1" data-edge-id="scale-zero">
+          <rect x="389.4" y="152" width="53.199999999999996" height="14" rx="3" class="c-mask"/>
+          <text x="416" y="162" class="t-backend" font-size="8" text-anchor="middle">scale 0↔1</text>
+        </g>
+        <g data-detail="context" data-edge-from="hpa" data-edge-to="apiserver" data-edge-label="s0-redis-orders" data-edge-key="2" data-edge-id="query-metric">
+          <rect x="801" y="386.5" width="82" height="14" rx="3" class="c-mask"/>
+          <text x="842" y="396.5" class="t-backend" font-size="8" text-anchor="middle">s0-redis-orders</text>
+        </g>
+        <g data-detail="context" data-edge-from="apiserver" data-edge-to="metrics" data-edge-label="APIService" data-edge-key="3" data-edge-id="apiservice">
+          <rect x="813" y="189.5" width="58" height="14" rx="3" class="c-mask"/>
+          <text x="842" y="199.5" class="t-backend" font-size="8" text-anchor="middle">APIService</text>
+        </g>
+        <g data-detail="context" data-edge-from="metrics" data-edge-to="operator" data-edge-label="gRPC :9666" data-edge-key="4" data-edge-id="grpc">
+          <rect x="529" y="98" width="58" height="14" rx="3" class="c-mask"/>
+          <text x="558" y="108" class="t-backend" font-size="8" text-anchor="middle">gRPC :9666</text>
+        </g>
+        <g data-detail="context" data-edge-from="hpa" data-edge-to="deploy" data-edge-label="scale 1↔N" data-edge-key="5" data-edge-id="scale-n">
+          <rect x="531.4" y="383" width="53.199999999999996" height="14" rx="3" class="c-mask"/>
+          <text x="558" y="393" class="t-backend" font-size="8" text-anchor="middle">scale 1↔N</text>
+        </g>
+        <g data-detail="context" data-edge-from="worker" data-edge-to="redis" data-edge-label="BLPOP" data-edge-key="6" data-edge-id="blpop">
+          <rect x="257" y="291.5" width="34" height="14" rx="3" class="c-mask"/>
+          <text x="274" y="301.5" class="t-muted" font-size="8" text-anchor="middle">BLPOP</text>
+        </g>
+        <g data-detail="context" data-edge-from="admission" data-edge-to="apiserver" data-edge-label="校验 ScaledObject" data-edge-key="7" data-edge-id="admit">
+          <rect x="938.2" y="152" width="91.6" height="14" rx="3" class="c-mask"/>
+          <text x="984" y="162" class="t-security" font-size="8" text-anchor="middle">校验 ScaledObject</text>
+        </g>
+        <g data-detail="context" data-edge-from="apiserver" data-edge-to="etcd" data-edge-label="写入" data-edge-key="8" data-edge-id="persist">
+          <rect x="969" y="342" width="30" height="14" rx="3" class="c-mask"/>
+          <text x="984" y="352" class="t-muted" font-size="8" text-anchor="middle">写入</text>
+        </g>
+
+        <!-- Legend -->
+      </svg>

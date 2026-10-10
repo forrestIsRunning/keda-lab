@@ -1,0 +1,88 @@
+# Redis 跑在 Docker 容器 keda-redis 里，并接在 kind 网络上。
+# Endpoints 的地址由 manifests/apply.sh 从 docker inspect 填入 __REDIS_IP__。
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: keda-redis-demo
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: keda-redis-demo
+spec:
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: 6379
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: redis
+  namespace: keda-redis-demo
+subsets:
+  - addresses:
+      - ip: __REDIS_IP__
+    ports:
+      - name: redis
+        port: 6379
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-worker
+  namespace: keda-redis-demo
+spec:
+  replicas: 0
+  selector:
+    matchLabels:
+      app: order-worker
+  template:
+    metadata:
+      labels:
+        app: order-worker
+    spec:
+      containers:
+        - name: worker
+          image: redis:7-alpine
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: REDIS_HOST
+              value: redis.keda-redis-demo.svc.cluster.local
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              until redis-cli -h "$REDIS_HOST" ping | grep -q PONG; do
+                sleep 1
+              done
+              echo "worker ready"
+              while true; do
+                item="$(redis-cli -h "$REDIS_HOST" --raw BLPOP orders 5 | awk 'NR==2')"
+                if [ -n "${item}" ]; then
+                  echo "processing ${item}"
+                  sleep 20
+                fi
+              done
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: order-worker
+  namespace: keda-redis-demo
+spec:
+  scaleTargetRef:
+    name: order-worker
+  pollingInterval: 5
+  cooldownPeriod: 15
+  initialCooldownPeriod: 0
+  minReplicaCount: 0
+  maxReplicaCount: 4
+  triggers:
+    - type: redis
+      metadata:
+        address: redis.keda-redis-demo.svc.cluster.local:6379
+        listName: orders
+        listLength: "2"
+        activationListLength: "0"

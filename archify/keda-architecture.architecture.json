@@ -1,0 +1,224 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "KEDA 怎样把 Redis 队列长度变成副本数",
+    "output": "keda-architecture.html",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "zero-to-one",
+        "label": "0 到 1",
+        "focus": ["redis", "operator", "deploy"],
+        "note": "operator 轮询 LLEN。队列长度大于 0 时，自己把 Deployment 的 scale 从 0 写成 1。"
+      },
+      {
+        "id": "one-to-n",
+        "label": "1 到 N",
+        "focus": ["hpa", "apiserver", "metrics", "operator", "redis"],
+        "note": "HPA 经 apiserver 问外部指标。metrics-apiserver 用 gRPC 问回 leader 上的同一个 scaler。"
+      },
+      {
+        "id": "consume",
+        "label": "消费者取订单",
+        "focus": ["worker", "redis"],
+        "note": "Pod 自己 BLPOP。KEDA 不在这条连接上，也不读订单正文。"
+      }
+    ]
+  },
+  "layout": {
+    "mode": "grid",
+    "origin": [72, 88],
+    "cols": 4,
+    "gapX": 88,
+    "gapY": 112,
+    "cellW": 196,
+    "cellH": 78
+  },
+  "components": [
+    {
+      "id": "redis",
+      "type": "external",
+      "label": "Redis List",
+      "sublabel": "orders",
+      "tag": "Docker",
+      "row": 0,
+      "col": 0
+    },
+    {
+      "id": "operator",
+      "type": "backend",
+      "label": "keda-operator",
+      "sublabel": "scaler 与 scale loop",
+      "tag": ":9666",
+      "row": 0,
+      "col": 1
+    },
+    {
+      "id": "metrics",
+      "type": "backend",
+      "label": "metrics-apiserver",
+      "sublabel": "external.metrics.k8s.io",
+      "row": 0,
+      "col": 2
+    },
+    {
+      "id": "admission",
+      "type": "security",
+      "label": "admission webhook",
+      "sublabel": "vscaledobject.kb.io",
+      "row": 0,
+      "col": 3
+    },
+    {
+      "id": "deploy",
+      "type": "backend",
+      "label": "Deployment /scale",
+      "sublabel": "order-worker",
+      "row": 1,
+      "col": 1
+    },
+    {
+      "id": "apiserver",
+      "type": "backend",
+      "label": "kube-apiserver",
+      "sublabel": "聚合外部指标",
+      "row": 1,
+      "col": 3
+    },
+    {
+      "id": "worker",
+      "type": "backend",
+      "label": "消费者 Pod",
+      "sublabel": "order-worker",
+      "row": 2,
+      "col": 1
+    },
+    {
+      "id": "hpa",
+      "type": "backend",
+      "label": "HPA 控制器",
+      "sublabel": "kube-controller-manager",
+      "row": 2,
+      "col": 2
+    },
+    {
+      "id": "etcd",
+      "type": "database",
+      "label": "etcd",
+      "sublabel": "ScaledObject 与 HPA",
+      "row": 2,
+      "col": 3
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "kind 集群 k8s-lab",
+      "pad": 56,
+      "wraps": ["admission", "operator", "metrics", "apiserver", "worker", "deploy", "hpa", "etcd"]
+    },
+    {
+      "kind": "region",
+      "label": "命名空间 keda",
+      "wraps": ["admission", "operator", "metrics"]
+    },
+    {
+      "kind": "security-group",
+      "label": "控制面",
+      "wraps": ["apiserver", "etcd", "hpa"]
+    }
+  ],
+  "connections": [
+    {
+      "id": "llen",
+      "from": "operator",
+      "to": "redis",
+      "label": "LLEN",
+      "variant": "emphasis"
+    },
+    {
+      "id": "scale-zero",
+      "from": "operator",
+      "to": "deploy",
+      "label": "scale 0↔1",
+      "variant": "emphasis",
+      "labelDy": 24
+    },
+    {
+      "id": "query-metric",
+      "from": "hpa",
+      "to": "apiserver",
+      "label": "s0-redis-orders",
+      "variant": "emphasis"
+    },
+    {
+      "id": "apiservice",
+      "from": "apiserver",
+      "to": "metrics",
+      "label": "APIService",
+      "variant": "emphasis"
+    },
+    {
+      "id": "grpc",
+      "from": "metrics",
+      "to": "operator",
+      "label": "gRPC :9666",
+      "variant": "emphasis"
+    },
+    {
+      "id": "scale-n",
+      "from": "hpa",
+      "to": "deploy",
+      "label": "scale 1↔N",
+      "variant": "emphasis"
+    },
+    {
+      "id": "blpop",
+      "from": "worker",
+      "to": "redis",
+      "label": "BLPOP"
+    },
+    {
+      "id": "admit",
+      "from": "admission",
+      "to": "apiserver",
+      "label": "校验 ScaledObject",
+      "variant": "security",
+      "labelDy": 24
+    },
+    {
+      "id": "persist",
+      "from": "apiserver",
+      "to": "etcd",
+      "label": "写入",
+      "labelDy": 24
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "0 和 1 由 operator 写",
+      "items": [
+        "ScaledObject 进 etcd 后，operator watch 到它并创建 HPA",
+        "活跃且副本为 0 时写成 1；冷却结束后写回 minReplicaCount"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "1 到 N 由 HPA 写",
+      "items": [
+        "外部指标默认 AverageValue，期望副本是 ceil(队列长度 / listLength)",
+        "副本已经是 0 时 HPA 进入 ScalingDisabled，不再把副本拉起来"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "订单不经过 KEDA",
+      "items": [
+        "LPUSH 和 BLPOP 都是业务自己的 Redis 连接",
+        "三个 KEDA 进程只决定副本数"
+      ]
+    }
+  ]
+}
