@@ -106,16 +106,3 @@ export DOCKER=/Applications/Docker.app/Contents/Resources/bin/docker
 ```
 
 随后副本走到 4，再回到 0。时间线和每次是谁写的 scale，见 [redis-list-path.md](./redis-list-path.md)。
-
-## 不要动
-
-- 不要新建 kind 集群，不要 `kubectl config use-context`。
-- 不要改这些命名空间：`agent-sandbox-demo`、`agent-sandbox-system`、`cubesandbox-system`、`opensandbox`、`opensandbox-system`。
-- 不要装 KEDA HTTP add-on。这次没有按请求把流量转进 Pod 的入口。
-- 不要为了这次实验去改 kind 节点里的 `HTTP_PROXY`。
-
-## 不在本仓库
-
-- KEDA 源码。对照 tag `v2.21.0`。
-- `kubernetes` 源码。HPA 的 `ScalingDisabled` 和缩容稳定窗口在那棵树里。
-- `kubernetes-lab` 的组件笔记。本地阅读，GitHub 上那份仓库是私有的。
