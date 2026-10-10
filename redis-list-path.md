@@ -31,20 +31,68 @@
 | 1 到 N | HPA 控制器 | 自己的队列，默认同步 15 秒 | 副本已经大于 0 时，按外部指标再写同一个 `/scale` |
 | 工作负载 | Deployment / ReplicaSet / kubelet | 对象变化时 | 把 `/scale` 上的数字变成 Pod。Pod 自己 `BLPOP` |
 
+两条写副本的路径都读 Redis，写的是同一个 `/scale`。HPA 只在副本已经大于 0 时才去读。
+
+```mermaid
+---
+config:
+  flowchart:
+    htmlLabels: true
+    wrappingWidth: 200
+    padding: 12
+    useMaxWidth: false
+    rankSpacing: 40
+    nodeSpacing: 28
+---
+flowchart TB
+  Push["LPUSH orders"]
+  Redis["Redis List orders"]
+  Loop["operator scale loop<br/>每 5 秒 LLEN"]
+  HPA["HPA 控制器<br/>resync 默认 15 秒"]
+  Scale["Deployment /scale"]
+  Work["ReplicaSet 建 Pod<br/>kubelet 起容器"]
+  Pop["Pod 自己 BLPOP"]
+
+  Push --> Redis
+  Redis -->|"每拍都 LLEN"| Loop
+  Redis -->|"副本大于 0 才查"| HPA
+  Loop -->|"副本是 0 且长度大于 0<br/>写成 1"| Scale
+  Loop -->|"冷却结束且 min 是 0<br/>写成 0"| Scale
+  HPA -->|"ceil 长度/2<br/>夹在 1 到 4"| Scale
+  Scale --> Work --> Pop --> Redis
+```
+
 operator 里还有一条 reconcile，由 `ScaledObject` 的变化驱动。它造 HPA、盖 finalizer、把 scale loop 拉起来。它不轮询 Redis，也不在热路径上改副本。第 7 节写它。
 
 HPA 的 `minReplicas` 这次是 1，不是 ScaledObject 上的 0。`GetHPAMinReplicas` 在 `minReplicaCount` 未设置或小于等于 0 时返回常量 1。所以 operator 造出来的 HPA spec 是 min 1、max 4。副本已经是 0 时，HPA 把 `ScalingActive` 标成 False，reason `ScalingDisabled`，`rescale = false`，这一拍连指标都不查。从 0 拉起来的只能是 operator。
 
 两条路径各自打 Redis。这次 `minReplicaCount` 是 0，`IsPollingIntervalRelevant` 为真，`UsesHPAObservations` 为假。scale loop 不复用 HPA 刚读到的数。只有 `minReplicaCount > 0`、没有 `idleReplicaCount`、trigger 也没开 `useCachedMetrics` 时，scale loop 才改读 HPA 留下的缓存。这次不是那条路径。
 
-写成副本之后的契约是这五条：
+一次运行在这五个状态之间走。箭头上是触发这次转移的条件。
 
-```text
-副本 == 0，队列空           谁也不写
-副本 == 0，队列非空         operator 写成 1          HPA 停在 ScalingDisabled
-副本 > 0，队列非空          operator 只更新时间      HPA 写成 ceil(长度 / listLength)
-副本 > 0，队列空，冷却中    谁也不写                 HPA 用稳定窗口按住当前值
-副本 > 0，冷却结束，min=0   operator 写成 0          下一轮 HPA 读到 0，进入 ScalingDisabled
+```mermaid
+---
+config:
+  flowchart:
+    htmlLabels: true
+    wrappingWidth: 220
+    padding: 12
+    useMaxWidth: false
+    rankSpacing: 36
+    nodeSpacing: 24
+---
+flowchart TB
+  Empty["副本 0，队列空<br/>谁也不写"]
+  Wake["副本 0，队列非空<br/>operator 写 1<br/>HPA 停在 ScalingDisabled"]
+  Run["副本大于 0，队列非空<br/>operator 只改 LastActiveTime<br/>HPA 写 ceil 长度/2"]
+  Cool["副本大于 0，队列空<br/>冷却未过，谁也不写<br/>HPA 用稳定窗口按住当前值"]
+  Down["冷却已过，min 是 0<br/>operator 写 0"]
+
+  Empty -->|"LLEN 大于 0"| Wake
+  Wake -->|"/scale 变成 1"| Run
+  Run -->|"LLEN 回到 0"| Cool
+  Cool -->|"再等 cooldownPeriod"| Down
+  Down -->|"下一轮 HPA 读到 0<br/>ScalingDisabled"| Empty
 ```
 
 `type: redis` 的 scaler 是 operator 进程里的 Go 对象，不是集群外的一个 gRPC 服务。
@@ -74,7 +122,58 @@ return []external_metrics.ExternalMetricValue{metric}, listLen > s.metadata.Acti
 
 指标名是 `s<下标>-redis-<listName>`，这次是 `s0-redis-orders`。没写 `metricType` 时 `GetMetricTargetType` 用 `AverageValue`。`Utilization` 会被拒绝。`listLength: "2"` 经 `GetMetricTarget` 写成 HPA 的 `averageValue: "2"`。
 
-`RequestScale` 先 `Get` scale 子资源。读失败就把 Ready 标成 False，reason `ErrorGettingCurrentReplicas`，这一拍结束，不改副本。然后按活跃和当前副本分支。这次用得到的是下面这些，源码在 `pkg/scaling/executor/scale_scaledobjects.go`。
+`RequestScale` 先 `Get` scale 子资源。读失败就把 Ready 标成 False，reason `ErrorGettingCurrentReplicas`，这一拍结束，不改副本。然后按活跃和当前副本分支。下面这张图是这次 Redis 单触发器走得到的分支，源码在 `pkg/scaling/executor/scale_scaledobjects.go`。
+
+```mermaid
+---
+config:
+  flowchart:
+    htmlLabels: true
+    wrappingWidth: 220
+    padding: 12
+    useMaxWidth: false
+    rankSpacing: 32
+    nodeSpacing: 20
+---
+flowchart TB
+  Tick["checkScalers<br/>先查，再等 5 秒"]
+  LLEN["Lua TYPE + LLEN<br/>得到长度和 isError"]
+  Read{"Get 当前副本"}
+  Fail["Ready=False<br/>不写 /scale"]
+  Act{"长度大于 0"}
+  IsZero{"副本是 0"}
+  Write1["scaleFromZeroOrIdle<br/>写成 1<br/>ScalerActive"]
+  Stamp["不写 /scale<br/>LastActiveTime = now"]
+  Bad{"报错，且没有 fallback"}
+  Trig["Ready=False<br/>TriggerError<br/>不写 /scale"]
+  Still{"副本大于 0<br/>且 min 是 0"}
+  Cooled{"LastActiveTime + 15 秒<br/>已经早于现在"}
+  Hold["ScalerCooldown<br/>不写 /scale"]
+  Write0["scaleToZeroOrIdle<br/>写成 0"]
+  Idle["ScalerNotActive<br/>不写 /scale"]
+  Patch["handleResult<br/>patch status<br/>里面没有副本数"]
+
+  Tick --> LLEN --> Read
+  Read -->|失败| Fail
+  Fail --> Patch
+  Read -->|读到了| Act
+  Act -->|是| IsZero
+  IsZero -->|是| Write1
+  IsZero -->|否| Stamp
+  Act -->|否| Bad
+  Bad -->|是| Trig
+  Bad -->|否| Still
+  Still -->|是| Cooled
+  Still -->|否| Idle
+  Cooled -->|是| Write0
+  Cooled -->|否| Hold
+  Write1 --> Patch
+  Stamp --> Patch
+  Write0 --> Patch
+  Hold --> Patch
+  Idle --> Patch
+  Trig --> Patch
+```
 
 | 读到的状态 | 走到哪 | 写 `/scale` | status |
 |---|---|---|---|
@@ -125,7 +224,40 @@ Deployment 把 ReplicaSet `order-worker-7b4f879c9c` 从 0 扩到 1。Pod `order-
 
 HPA 不订阅 KEDA 的轮询，也不 watch 这个 Deployment。它 watch 的是 HPA 对象自己，informer 的 resync 默认 15 秒；status 写回去还会再入队。08:02:26 到 08:02:33 只有 7 秒，是这次入队落在这里，不是 operator 通知了它。
 
-这一拍 `currentReplicas` 已经是 1，不再走进 `ScalingDisabled`。它向 apiserver 要 `external.metrics.k8s.io/v1beta1` 的 `s0-redis-orders`，标签 `scaledobject.keda.sh/name=order-worker`。
+这一拍 `currentReplicas` 已经是 1，不再走进 `ScalingDisabled`。它向 apiserver 要 `external.metrics.k8s.io/v1beta1` 的 `s0-redis-orders`，标签 `scaledobject.keda.sh/name=order-worker`。查询本身不改副本，数字是算完再写回同一个 `/scale`。
+
+```mermaid
+---
+config:
+  sequence:
+    useMaxWidth: false
+    wrap: true
+    width: 160
+    messageMargin: 28
+---
+sequenceDiagram
+  participant H as HPA 控制器
+  participant API as kube-apiserver
+  participant MS as metrics-apiserver
+  participant OP as "operator :9666"
+  participant R as Redis
+
+  H->>API: 读 /scale
+  alt 副本是 0
+    Note over H: ScalingDisabled，不查指标，不写
+  else 副本大于 0
+    H->>API: 要 s0-redis-orders
+    API->>MS: APIService external.metrics
+    MS->>OP: gRPC GetMetrics
+    OP->>R: 再做一次 LLEN
+    R-->>OP: 长度
+    OP-->>MS: 长度
+    MS-->>API: 长度
+    API-->>H: 长度
+    Note over H: ceil(长度/2)，稳定窗口取最近最高，夹进 1 到 4
+    H->>API: 与当前副本不同才 Update /scale
+  end
+```
 
 apiserver 按 APIService `v1beta1.external.metrics.k8s.io` 转到 `keda-operator-metrics-apiserver`。这个进程不连 Redis。`GetExternalMetric` 用那个标签找到 ScaledObject，再 gRPC 到 `keda-operator.keda.svc.cluster.local:9666`。gRPC 只在 leader 上听。`GetScaledObjectMetrics` 调同一个 Redis scaler 的 `GetMetricsAndActivity`。`useCachedMetrics` 没开，这是一次新的 `LLEN`。
 
@@ -173,6 +305,32 @@ HPA 停手的条件是它这一拍读到的副本已经是 0。读到 0 就再�
 
 有一个缝。HPA 如果在 operator 写 0 之前已经把 scale 对象读进内存，这次 Update 仍可能把副本写回 4。这次观察里没有发生。若发生了，下一拍 scale loop 会再写 0：冷却已经过了，不活跃且副本大于 0 仍走 `scaleToZeroOrIdle`。停手要等某一次 HPA 的 Get 看见 0。
 
+```mermaid
+---
+config:
+  sequence:
+    useMaxWidth: false
+    wrap: true
+    width: 150
+    messageMargin: 28
+---
+sequenceDiagram
+  participant OP as operator
+  participant SC as "/scale"
+  participant H as HPA
+
+  Note over OP,H: 队列已空，副本仍是 4
+  OP->>OP: ScalerCooldown，不写
+  H->>H: 裸 desired 是 0，窗口里最高是 4，不写
+  OP->>SC: 冷却结束，写成 0
+  alt 这一拍读到的还是 4
+    H->>SC: 仍可能写回 4
+    OP->>SC: 下一拍再写成 0
+  else 这一拍读到 0
+    Note over H: ScalingDisabled，rescale=false，停手
+  end
+```
+
 ## 6. 这 8 笔订单对上哪一拍
 
 Redis 在 kind 网络上，这次地址 `172.20.0.4`。没有 selector 的 Service 把 `redis.keda-redis-demo.svc.cluster.local:6379` 指到它。
@@ -187,7 +345,38 @@ Redis 在 kind 网络上，这次地址 `172.20.0.4`。没有 selector 的 Servi
 | `cooldownPeriod` | 15 秒 | 300 秒 | 最后一次活跃之后多久才允许写 0 |
 | `initialCooldownPeriod` | 0 | 0 | 还没有 `LastActiveTime` 时用。这次激活之后用的是上一行 |
 
-时刻是 +0800。
+时刻是 +0800。下图是这 44 秒里谁写了 `/scale`。
+
+```mermaid
+---
+config:
+  sequence:
+    useMaxWidth: false
+    wrap: true
+    width: 140
+    messageMargin: 24
+---
+sequenceDiagram
+  participant Q as Redis orders
+  participant OP as operator
+  participant SC as "/scale"
+  participant H as HPA
+  participant P as order-worker
+
+  Q->>Q: 08:02:22 LPUSH 8 条
+  Note over H: 副本 0，ScalingDisabled，不查
+  OP->>Q: 08:02:26 LLEN 大于 0
+  OP->>SC: 写成 1
+  SC->>P: ReplicaSet 拉起第一个 Pod
+  P->>Q: BLPOP，长度变成 7
+  H->>Q: 08:02:33 再 LLEN，样本是 7 或 8
+  H->>SC: ceil 后写成 4
+  P->>Q: 四个 Pod 把八条取完
+  OP->>OP: 08:02:59 ScalerCooldown，不写
+  H->>H: 稳定窗口按住 4，不写
+  OP->>SC: 08:03:06 写成 0
+  H->>SC: 08:03:40 读到 0，ScalingDisabled
+```
 
 | 时刻 | 副本 | 队列 | 这一拍 |
 |---|---|---|---|
