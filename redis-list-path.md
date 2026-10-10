@@ -1,169 +1,113 @@
-# 一笔订单怎样改掉 Deployment 的副本数
+# KEDA 怎样工作
 
-本文跟着 2026-10-10 08:02 的一次 `LPUSH` 走完。8 笔订单进 Docker 里的 Redis List `orders`。KEDA 不读订单正文，只看这个 list 的长度。长度大于 0 时，`keda-operator` 把 Deployment `order-worker` 的副本从 0 写成 1。HPA 再写成 4。消费者自己 `BLPOP`。冷却过后，operator 把副本从 4 写成 0。
+2026-10-10 08:02:22，8 笔订单 `LPUSH` 进 Redis List `orders`。44 秒里 Deployment `order-worker` 的 `/scale` 被改了三次：0 写成 1，1 写成 4，4 写成 0。写这三次的不是同一个进程。
 
-对照 KEDA tag `v2.21.0`，commit `626ded5d783`（2026-09-23）。这次引用的检出在 `/tmp/keda-v2.21.0`，不进本仓库。HPA 行为对照 `/Users/xiaoxia/Projects/learning/kubernetes`，commit `f322464da46`。跑实验的集群是 kind `k8s-lab`，服务端 v1.36.1。KEDA 2.21 声明兼容 1.34–1.36。集群上看到的 `ScalingDisabled` 文案和这棵树里的字符串一致。
+`keda-operator` 只在副本越过 0 的时候改数字。1 到 N 由 kube-controller-manager 里的 HPA 控制器算。两边写的是同一个 scale 子资源。订单正文不进 KEDA，消费者自己 `BLPOP`。
 
-安装、导镜像、起 Redis 的命令在 [README](./README.md)。本文不重复那些命令。
-
-Kubernetes 怎样把一次写入送进 etcd、控制器怎样循环、Pod 怎样被调度并在节点上跑起来、Service 怎样变成转发规则，都在本地 `~/Projects/learning/kubernetes-lab`。那份仓库是私有的。本文只写 KEDA 这一段。
+对照 KEDA tag `v2.21.0`，commit `626ded5d783`，检出在 `/tmp/keda-v2.21.0`。HPA 对照 `/Users/xiaoxia/Projects/learning/kubernetes`，commit `f322464da46`。集群是 kind `k8s-lab`，服务端 v1.36.1。安装和这次的清单在 [README](./README.md)。组件图在第 8 节，本文写决策顺序。
 
 ## 目录
 
-1. [本机这一次](#1-本机这一次)
-2. [三个进程](#2-三个进程)
-3. [订单只进 Redis](#3-订单只进-redis)
-4. [ScaledObject 写成 HPA](#4-scaledobject-写成-hpa)
-5. [0 写成 1](#5-0-写成-1)
-6. [1 写成 4](#6-1-写成-4)
-7. [消费者自己取订单](#7-消费者自己取订单)
-8. [4 写成 0](#8-4-写成-0)
+1. [坐标系](#1-坐标系)
+2. [一次轮询的顺序](#2-一次轮询的顺序)
+3. [越过 0：operator 写 1](#3-越过-0operator-写-1)
+4. [1 到 N：HPA 再写同一个 scale](#4-1-到-nhpa-再写同一个-scale)
+5. [回到 0：冷却、稳定窗口、HPA 停手](#5-回到-0冷却稳定窗口hpa-停手)
+6. [这 8 笔订单对上哪一拍](#6-这-8-笔订单对上哪一拍)
+7. [轮询开始之前](#7-轮询开始之前)
+8. [三个进程](#8-三个进程)
 9. [边界](#9-边界)
 10. [源码索引](#10-源码索引)
 11. [观察命令](#11-观察命令)
 
-## 1. 本机这一次
+## 1. 坐标系
 
-Redis 容器 `keda-redis`，镜像 `redis:7-alpine`，接在 kind 的 docker 网络上。这次地址 `172.20.0.4`，宿主机端口 `16379`。集群里是一个没有 selector 的 Service `redis.keda-redis-demo.svc.cluster.local:6379`，Endpoints 指向这个地址。kube-proxy 消费的是对应的 EndpointSlice。
+一条订单从 `LPUSH` 到 Pod 起来，经过四段。只有中间两段会写副本。
 
-ScaledObject 的参数：
-
-| 字段 | 这次的值 | 源码默认 |
-|---|---|---|
-| `minReplicaCount` | 0 | 未设置时，HPA 的 min 仍按 1 填 |
-| `maxReplicaCount` | 4 | — |
-| `listLength` | `"2"` | 目标值，配合默认 `AverageValue` |
-| `activationListLength` | `"0"` | 激活条件是严格大于 |
-| `pollingInterval` | 5 秒 | 30 秒，`defaultPollingInterval` |
-| `cooldownPeriod` | 15 秒 | 300 秒 |
-| `initialCooldownPeriod` | 0 | 0 |
-
-消费者每 `BLPOP` 到一条就睡 20 秒，避免队列在 HPA 采样前被吃空。
-
-08:02:22（+0800）向空队列 `LPUSH` 了 `order-1` 到 `order-8`。下面的时间是同一时区。
-
-| 时刻 | 副本 spec | 就绪 | 队列长度 | ScaledObject Active | 这一拍谁写了 scale |
-|---|---|---|---|---|---|
-| 08:02:22 | 0 | 0 | 8，刚写入 | `ScalerNotActive` | 还没轮询到 |
-| 08:02:26 | 1 | | | | operator，`Successfully updated ScaleTarget`，0 到 1 |
-| 08:02:28 | 1 | 1 | 7 | `ScalerActive` | 第一个 Pod 已经取走一条 |
-| 08:02:33 | 4 | 4 | 4 | `ScalerActive` | HPA `SuccessfulRescale`，新大小 4 |
-| 08:02:59 | 4 | 4 | 0 | `ScalerCooldown` | HPA 仍报 desired 4 |
-| 08:03:06 | 0 | | 0 | | operator，`minReplicaCount`，4 到 0 |
-| 08:03:40 | 0 | 0 | 0 | `ScalerNotActive` | HPA `ScalingActive=False`，原因 `ScalingDisabled` |
-
-四个 Pod 的日志把 `order-1` 到 `order-8` 都打出来了。每个 Pod 两条。缩到 0 时 kubelet 发了 `Killing`。
-
-写这篇时集群还停在这一轮结束的状态：Deployment `order-worker` 0/0，ScaledObject `Ready=True`、`Active=False`（`ScalerNotActive`），HPA `keda-hpa-order-worker` 的 `TARGETS` 是 `<unknown>/2 (avg)`，`REPLICAS` 是 0。Redis `LLEN orders` 是 0。
-
-## 2. 三个进程
-
-![operator 轮询 LLEN，自己把副本从 0 写成 1；HPA 经外部指标写成 N。Redis 在 kind 集群外面。](./assets/keda-architecture.svg)
-
-图上三条边界：
-
-- Redis 在 kind 集群外面。`LLEN` 和 `BLPOP` 都从集群里打到这台 Docker。
-- 命名空间 `keda` 里是三个 KEDA 进程。
-- 控制面里是 kube-apiserver、etcd，以及 kube-controller-manager 里的 HPA 控制器。
-
-| Deployment | 镜像 | 端口 | 这一次做什么 |
+| 段 | 进程 | 周期 | 这次它干什么 |
 |---|---|---|---|
-| `keda-operator` | `ghcr.io/kedacore/keda:2.21.0` | Service `keda-operator` 的 9666 | 选主、reconcile、scale loop、对 Redis 做 `LLEN`、自己写 0 和 1 |
-| `keda-operator-metrics-apiserver` | `ghcr.io/kedacore/keda-metrics-apiserver:2.21.0` | 443、8080 | 注册 APIService，把 HPA 的外部指标查询用 gRPC 问回 operator |
-| `keda-admission-webhooks` | `ghcr.io/kedacore/keda-admission-webhooks:2.21.0` | 443 | 校验 ScaledObject。通过之后对象才进 etcd |
+| 事件源 | Redis 容器 `keda-redis` | 无 | List `orders`。KEDA 只读长度 |
+| 0 的边界 | `keda-operator` 的 scale loop | `pollingInterval`，这次 5 秒 | `LLEN`。副本是 0 且队列非空就写成 1。冷却结束后写成 0 |
+| 1 到 N | HPA 控制器 | 自己的队列，默认同步 15 秒 | 副本已经大于 0 时，按外部指标再写同一个 `/scale` |
+| 工作负载 | Deployment / ReplicaSet / kubelet | 对象变化时 | 把 `/scale` 上的数字变成 Pod。Pod 自己 `BLPOP` |
 
-三个 Deployment 的 `imagePullPolicy` 现在是 `IfNotPresent`。原因在 [README](./README.md)。
+operator 里还有一条 reconcile，由 `ScaledObject` 的变化驱动。它造 HPA、盖 finalizer、把 scale loop 拉起来。它不轮询 Redis，也不在热路径上改副本。第 7 节写它。
 
-`keda-operator` 是 controller-runtime 的控制器进程。选主成功之后它 reconcile `ScaledObject`，创建并持有 HPA，再按 `pollingInterval` 跑 scale loop。同一个进程在 `:9666` 起 gRPC Metrics Service。`pkg/metricsservice/server.go` 的 `NeedLeaderElection` 返回 true，所以只有 leader 听这个端口。副本数是 1 时，Service `keda-operator` 后面就是这个 Pod。
+HPA 的 `minReplicas` 这次是 1，不是 ScaledObject 上的 0。`GetHPAMinReplicas` 在 `minReplicaCount` 未设置或小于等于 0 时返回常量 1。所以 operator 造出来的 HPA spec 是 min 1、max 4。副本已经是 0 时，HPA 把 `ScalingActive` 标成 False，reason `ScalingDisabled`，`rescale = false`，这一拍连指标都不查。从 0 拉起来的只能是 operator。
 
-Lease 名是 `operator.keda.sh`，在命名空间 `keda`。`--leader-election-id` 的默认值就是这个名字。写这篇时持有者是 `keda-operator-797ff8c54-6pcpj_107bfee0-2a57-482b-8241-0aa142185f67`。
+两条路径各自打 Redis。这次 `minReplicaCount` 是 0，`IsPollingIntervalRelevant` 为真，`UsesHPAObservations` 为假。scale loop 不复用 HPA 刚读到的数。只有 `minReplicaCount > 0`、没有 `idleReplicaCount`、trigger 也没开 `useCachedMetrics` 时，scale loop 才改读 HPA 留下的缓存。这次不是那条路径。
 
-`keda-operator-metrics-apiserver` 注册 APIService `v1beta1.external.metrics.k8s.io`。本机 Available 为 True，后端 Service 是 `keda-operator-metrics-apiserver`。HPA 向 apiserver 要外部指标时，聚合层把请求转到这个 Pod。它自己不连 Redis。`cmd/adapter/main.go` 里默认的 gRPC 地址是 `keda-operator.<namespace>.svc.cluster.local:9666`。`pkg/provider/provider.go` 的 `GetExternalMetric` 用标签 `scaledobject.keda.sh/name` 找出 ScaledObject，再调用 operator 的 `GetMetrics`。
+写成副本之后的契约是这五条：
 
-`keda-admission-webhooks` 给 ValidatingWebhookConfiguration `keda-admission` 提供这些 webhook，全部打到 Service `keda-admission-webhooks`：
-
-- `vscaledobject.kb.io`
-- `vscaledjob.kb.io`
-- `vstriggerauthentication.kb.io`
-- `vsclustertriggerauthentication.kb.io`
-- `vcloudeventsource.kb.io`
-- `vclustercloudeventsource.kb.io`
-
-这次 `kubectl apply` 的 ScaledObject 通过了 `vscaledobject.kb.io`。
-
-Redis scaler 是 operator 进程里的一个 Go 对象，带一个 `go-redis` 客户端。`type: redis` 走的是这条内置实现。scale loop 和 gRPC `GetMetrics` 都调用这份缓存里的同一个 scaler。这次没有打开 `useCachedMetrics`，所以 HPA 来问的时候会再跑一次 Lua。
-
-安装还创建了这些 CRD：
-
-| CRD | 这次 |
-|---|---|
-| `scaledobjects.keda.sh` | 用了，对象名 `order-worker` |
-| `scaledjobs.keda.sh` | 没建对象 |
-| `triggerauthentications.keda.sh` | 没建。Redis 没有密码 |
-| `clustertriggerauthentications.keda.sh` | 没建 |
-| `cloudeventsources.eventing.keda.sh` | 没建 |
-| `clustercloudeventsources.eventing.keda.sh` | 没建 |
-
-## 3. 订单只进 Redis
-
-业务写入是：
-
-```bash
-redis-cli LPUSH orders order-1
+```text
+副本 == 0，队列空           谁也不写
+副本 == 0，队列非空         operator 写成 1          HPA 停在 ScalingDisabled
+副本 > 0，队列非空          operator 只更新时间      HPA 写成 ceil(长度 / listLength)
+副本 > 0，队列空，冷却中    谁也不写                 HPA 用稳定窗口按住当前值
+副本 > 0，冷却结束，min=0   operator 写成 0          下一轮 HPA 读到 0，进入 ScalingDisabled
 ```
 
-消费者是 Deployment 里的 `redis:7-alpine`。清单在 [manifests/keda-redis-demo.yaml](./manifests/keda-redis-demo.yaml)。它先对 Service 做 `PING`，然后循环 `BLPOP orders 5`。`awk 'NR==2'` 取出值，打印 `processing <订单>`，再睡 20 秒。KEDA 不在这条连接上。它不代理消息，也不知道订单正文。
+`type: redis` 的 scaler 是 operator 进程里的 Go 对象，不是集群外的一个 gRPC 服务。
 
-Redis scaler 在 `NewRedisScaler` 里放了一段 Lua。`TYPE` 之后：
+## 2. 一次轮询的顺序
 
-| key 类型 | 命令 |
-|---|---|
-| `list`，或 key 不存在 | `LLEN` |
-| `zset` | `ZCARD` |
-| `set` | `SCARD` |
-| `hash` | `HLEN` |
-| 其他 | 返回错误 |
+`HandleScalableObject` 为这个 ScaledObject 做三件事：取消同 key 上一次的 loop，再起两个 goroutine。`startPushScalers` 只服务实现了 `PushScaler` 的触发器。Redis list 不是这种。激活可以从 channel 里直接调 `RequestScale`；失活仍走下面的轮询。这次只有轮询。
 
-这次 key `orders` 是 list，所以执行的是 `LLEN`。
+`startScaleLoop` 先 `checkScalers`，再等 `pollingInterval`。第一拍不等待。
 
-`GetMetricsAndActivity` 把这个长度交回去。激活条件是 `listLen > activationListLength`。这次 `activationListLength` 是 0，所以长度至少为 1 才算活跃。长度等于 0 时第二个返回值是 false。
+`checkScalers` 按这个顺序走：
 
-指标名在 `GetMetricSpecForScaling` 里拼出来：`GenerateMetricNameWithIndex` 的格式是 `s<触发器下标>-<metric>`，metric 是 `redis-<listName>`。集群里的 HPA 写的是 `s0-redis-orders`。`GetMetricTargetType` 在 ScaledObject 没写 `metricType` 时用 `AverageValue`。目标值是 `listLength`，这次是 2。
+1. 按名字把 ScaledObject 重新读出来。读失败，这一拍结束。
+2. `getScaledObjectState`。每个 scaler 一个 goroutine。有一个 `IsActive`，整个对象就是活跃的。有一个报错，`isError` 就是 true，并且清掉 scaler 缓存，下一拍重新建客户端。
+3. `RequestScale`。先读当前副本，再决定写不写 `/scale`。
+4. `handleResult` 把条件、`LastActiveTime` patch 回 ScaledObject 的 status。副本数不在这次 patch 里。副本只走 `/scale` 的 Update。
+5. 这一拍若拿到了指标，写入 operator 内存里的 metrics cache。HPA 的查询默认不读这份缓存。
 
-## 4. ScaledObject 写成 HPA
+Redis 这一拍在 `GetMetricsAndActivity`：
 
-`kubectl apply` 进 apiserver。webhook `vscaledobject.kb.io` 校验通过后，对象进 etcd。operator 的 `Reconcile` 看到它：
+```go
+metric := GenerateMetricInMili(metricName, float64(listLen))
+return []external_metrics.ExternalMetricValue{metric}, listLen > s.metadata.ActivationListLength, nil
+```
 
-1. 盖上 finalizer `finalizer.keda.sh`。同一条 reconcile 里有两句日志：`Adding Finalizer for the ScaledObject`，以及 `metadata.finalizers: "finalizer.keda.sh": prefer a domain-qualified finalizer name including a path (/) to avoid accidental conflicts with other finalizer writers`。对象上的 finalizer 仍然是这个不带 `/` 的名字。
-2. 确认 `scaleTargetRef` 指向的 Deployment 有 `/scale` 子资源。日志是 `Detected resource targeted for scaling`，资源 `apps/v1.Deployment`，名字 `order-worker`。
-3. `Creating a new HPA`，名字 `keda-hpa-order-worker`。
-4. 启动 scale loop。事件是 `Scaler redis is built` 和 `Started scalers watch`。
+长度来自一段 Lua：先 `TYPE`。list 或不存在走 `LLEN`，zset / set / hash 走对应的 `ZCARD` / `SCARD` / `HLEN`。`orders` 是 list。`activationListLength` 这次是 0，比较是严格大于，所以长度至少为 1 才活跃。长度 0 是不活跃，不是错误。
 
-生成的 HPA 带 ownerReference，控制器是这个 ScaledObject。`GetHPAMinReplicas` 在 `minReplicaCount` 大于 0 时用它，否则返回常量 `defaultHPAMinReplicas`，值是 1。集群上的 spec 是：
+指标名是 `s<下标>-redis-<listName>`，这次是 `s0-redis-orders`。没写 `metricType` 时 `GetMetricTargetType` 用 `AverageValue`。`Utilization` 会被拒绝。`listLength: "2"` 经 `GetMetricTarget` 写成 HPA 的 `averageValue: "2"`。
 
-| 字段 | 值 |
-|---|---|
-| `scaleTargetRef` | `apps/v1` Deployment `order-worker` |
-| `minReplicas` | 1 |
-| `maxReplicas` | 4 |
-| 指标 | External `s0-redis-orders`，`AverageValue` `"2"` |
-| 选择器 | `scaledobject.keda.sh/name=order-worker` |
+`RequestScale` 先 `Get` scale 子资源。读失败就把 Ready 标成 False，reason `ErrorGettingCurrentReplicas`，这一拍结束，不改副本。然后按活跃和当前副本分支。这次用得到的是下面这些，源码在 `pkg/scaling/executor/scale_scaledobjects.go`。
 
-空队列时 ScaledObject 的条件是 `Ready=True`、`Active=False`（`ScalerNotActive`）、`Fallback=False`、`Paused=False`。HPA 的 `ScalingActive=False`，原因 `ScalingDisabled`，文案是 `scaling is disabled since the replica count of the target is zero`。`horizontal.go` 在副本已经是 0、`minReplicas` 不是 0、并且没有打开 HPA 自己的 scale-to-zero 时写这句。
+| 读到的状态 | 走到哪 | 写 `/scale` | status |
+|---|---|---|---|
+| 活跃，当前副本是 0 | `scaleFromZeroOrIdle` | `minReplicaCount > 0` 就写它，否则写 1 | `ScalerActive`，记下 `LastActiveTime` |
+| 活跃，当前副本已经大于 0 | 默认分支 | 不写 | `ScalerActive`，只更新 `LastActiveTime` |
+| 不活跃，当前副本大于 0，且 `minReplicaCount == 0` | `scaleToZeroOrIdle` | 冷却已过才写成 0 | 冷却中是 `ScalerCooldown`；写成之后是 `ScalerNotActive` |
+| 不活跃，当前副本已经是 0 | 默认分支 | 不写 | `ScalerNotActive` |
+| scaler 报错，没有 fallback | 错误分支 | 不写 | Ready False，`TriggerError`。报错不会把副本打成 0 |
 
-ScaledObject 把这个原因记成 `HPAActive=True`，reason `ScalingDisabled`。`getHPAHealth` 看到 HPA 的 `ScalingDisabled` 时，把它当成缩到 0 之后的正常空闲，条件状态仍是 True。
+冷却的比较是 `LastActiveTime + cooldownPeriod` 早于现在。`LastActiveTime` 为空时，改用对象创建时间加 `initialCooldownPeriod`。这次分别是 15 秒和 0。源码默认是 300 秒和 0。
 
-刚创建 Service 的那一秒，EndpointSlice 已经在，kube-proxy 的规则还没跟上。operator 日志是 `redis: connection pool: failed to dial after 5 attempts: dial tcp 10.96.206.94:6379: connect: connection refused`。探测 Pod 也是 connection refused。下一轮就能 `PING` 和 `LLEN`。这和 kube-proxy 把 EndpointSlice 装成转发规则之间的延迟是同一段。
+写副本的函数是 `updateScaleOnScaleTarget`：对 scale 子资源 Get，把 `spec.replicas` 设成目标，再 Update。Deployment 的 `spec.replicas` 就是这个字段。Update 返回之后，KEDA 不再参与。Deployment 控制器改 ReplicaSet 的副本，ReplicaSet 控制器建或删 Pod，调度器绑定，kubelet 起容器。
 
-## 5. 0 写成 1
+每一拍的最后是 `checkHPAHealth`。它读 HPA 的 `ScalingActive`，不改 Ready：
 
-scale loop 在 `startScaleLoop`。它按 `pollingInterval` 调用 `checkScalers`，再进 `RequestScale`。
+- 条件为 True：ScaledObject 上 `HPAActive=True`。
+- reason 是 `ScalingDisabled`：仍然 `HPAActive=True`。这是 KEDA 自己把副本收到 0 之后的空闲，不是 HPA 坏了。
+- 其他 False：`HPAActive=False`，reason 原样透传，例如 `FailedGetExternalMetric`。
+- HPA 还读不到：这一拍不改 `HPAActive`，留下上次的值。
 
-`RequestScale` 先读当前副本。触发器活跃，并且当前副本是 0 时，走 `scaleFromZeroOrIdle`。`minReplicaCount` 大于 0 就用它，否则写成 1。`updateScaleOnScaleTarget` 调 scale 子资源的 Update。
+所以空队列时 `Ready=True`、`Active=False`、`HPAActive=True` reason `ScalingDisabled` 可以同时成立。
 
-**0 离开 0 的那一次写入是 operator 做的。** 这一拍 HPA 还停在 `ScalingDisabled`。
+## 3. 越过 0：operator 写 1
 
-08:02:26 的日志：
+08:02:22 队列长度变成 8，Deployment 仍是 0。HPA 这一拍读到 `currentReplicas == 0`，而它的 `minReplicas` 是 1。`HPAScaleToZero` 没开，`shouldComputeMetricsForZeroReplicas` 返回「不算指标，并且禁用」。条件文案是：
+
+```text
+scaling is disabled since the replica count of the target is zero
+```
+
+`rescale` 被设成 false，函数在更新 `/scale` 之前返回。`kubectl get hpa` 上的 `TARGETS` 是 `<unknown>/2 (avg)`：分母 2 来自 spec，分子没有，因为这一拍没有去问外部指标。
+
+scale loop 的下一拍（08:02:26，UTC 00:02:26）读到活跃，并且当前副本是 0，进入 `scaleFromZeroOrIdle`。个数不看队列长度。`minReplicaCount` 是 0，所以写 1。若 min 是 3，这里会写 3，仍然不是 `ceil(长度/2)`。
 
 ```text
 Successfully updated ScaleTarget
@@ -171,55 +115,51 @@ Original Replicas Count 0
 New Replicas Count 1
 ```
 
-事件是 `KEDAScaleTargetActivated`：`Scaled apps/v1.Deployment keda-redis-demo/order-worker from 0 to 1, triggered by s0-redis-orders`。
+事件 `KEDAScaleTargetActivated`：`Scaled apps/v1.Deployment keda-redis-demo/order-worker from 0 to 1, triggered by s0-redis-orders`。
 
-后面是 Kubernetes 自己的控制器。Deployment 控制器看到 `spec.replicas` 变成 1，把 ReplicaSet `order-worker-7b4f879c9c` 从 0 扩到 1。ReplicaSet 创建 Pod。调度器把 Pod 绑到 `k8s-lab-worker`。kubelet 用节点上已有的 `redis:7-alpine` 把容器拉起来。08:02:28 这个 Pod 已经就绪，并且取走了一条，队列长度变成 7。
+Deployment 把 ReplicaSet `order-worker-7b4f879c9c` 从 0 扩到 1。Pod `order-worker-7b4f879c9c-m22d4` 绑到 `k8s-lab-worker`。镜像 `redis:7-alpine` 节点上已经有。08:02:28 这个 Pod 就绪，队列变成 7：它已经 `BLPOP` 走一条。
 
-## 6. 1 写成 4
+同一时刻 operator 若再跑一拍，会走进「活跃且副本已经大于 0」。它只把 `LastActiveTime` 更新成现在，不碰 `/scale`。1 以上的数字留给 HPA。
 
-副本大于 0 之后，`RequestScale` 不再改副本。它只更新 `LastActiveTime`，并把 `Active` 标成 `ScalerActive`。**1 到 N 交给 HPA。**
+## 4. 1 到 N：HPA 再写同一个 scale
 
-kind 的 kube-controller-manager 没有改 `--horizontal-pod-autoscaler-sync-period`。这份树的默认值是 15 秒，在 `pkg/controller/podautoscaler/config/v1alpha1/defaults.go`。
+HPA 不订阅 KEDA 的轮询，也不 watch 这个 Deployment。它 watch 的是 HPA 对象自己，informer 的 resync 默认 15 秒；status 写回去还会再入队。08:02:26 到 08:02:33 只有 7 秒，是这次入队落在这里，不是 operator 通知了它。
 
-HPA 每一轮：
+这一拍 `currentReplicas` 已经是 1，不再走进 `ScalingDisabled`。它向 apiserver 要 `external.metrics.k8s.io/v1beta1` 的 `s0-redis-orders`，标签 `scaledobject.keda.sh/name=order-worker`。
 
-1. 读 Deployment 的 scale，拿到当前副本。
-2. 向 apiserver 查询 `external.metrics.k8s.io/v1beta1` 的 `s0-redis-orders`，标签是 `scaledobject.keda.sh/name=order-worker`。
-3. apiserver 把请求代理到 `keda-operator-metrics-apiserver`。
-4. adapter 经 gRPC `:9666` 调到 leader operator 的 `GetMetrics`。
-5. `GetScaledObjectMetrics` 找到 scaler 缓存，再调 `GetMetricsAndActivity`。Redis scaler 再跑一次 Lua `LLEN`。
-6. 算出期望副本，写回同一个 scale 子资源。
+apiserver 按 APIService `v1beta1.external.metrics.k8s.io` 转到 `keda-operator-metrics-apiserver`。这个进程不连 Redis。`GetExternalMetric` 用那个标签找到 ScaledObject，再 gRPC 到 `keda-operator.keda.svc.cluster.local:9666`。gRPC 只在 leader 上听。`GetScaledObjectMetrics` 调同一个 Redis scaler 的 `GetMetricsAndActivity`。`useCachedMetrics` 没开，这是一次新的 `LLEN`。
 
-默认指标类型是 `AverageValue`，所以走 `GetExternalPerPodMetricReplicas`。期望副本是 `ceil(指标值 / 目标值)`。目标值是 2。`GenerateMetricInMili` 把长度收成 Quantity，HPA 用 `MilliValue` 除的时候毫单位会约掉，除数仍然是 list 长度和 `listLength`。队列长度为 8 或 7 时，`ceil(8/2)` 和 `ceil(7/2)` 都是 4。`maxReplicaCount` 也是 4。
+指标类型是 `AverageValue`，HPA 走 `GetExternalPerPodMetricReplicas`。两边都取 Quantity 的 `MilliValue`：长度 8 收成 `"8.000"`，MilliValue 是 8000；目标 `"2"` 的 MilliValue 是 2000。相除之后毫单位消掉。
 
-容差默认 0.1。变化比例落在容差里就保持当前副本。从 1 拉到 4 时比例远在容差外。
+```text
+usageRatio = 队列长度 / (listLength * 当前副本)
+落在容差外时，desired = ceil(队列长度 / listLength)
+```
 
-08:02:33 的 HPA 事件：
+容差默认 0.1。然后 `normalizeDesiredReplicas` 做两件事：5 分钟缩容稳定窗口里取最近最高的建议；再用 `convertDesiredReplicasWithRules` 夹在 HPA 的 min 1 和 max 4 之间。没写 `behavior` 时，单次扩容还有一道上限 `max(2 × 当前副本, 4)`。从 1 出发，这道上限就是 4，和 `maxReplicas` 重合。
+
+08:02:33 的事件：
 
 ```text
 SuccessfulRescale
 New size: 4; reason: external metric s0-redis-orders(&LabelSelector{MatchLabels:map[string]string{scaledobject.keda.sh/name: order-worker,},MatchExpressions:[]LabelSelectorRequirement{},}) above target
 ```
 
-Deployment 把同一个 ReplicaSet 从 1 扩到 4。三个新 Pod 都绑到 `k8s-lab-worker`，几秒内就绪。此时队列长度已经是 4：四个 Pod 各取走一条，正在睡那 20 秒。
+事件里没有指标原值。能算出 4 的长度是 7 或 8：`ceil(7/2)=4`，`ceil(8/2)=4`，`ceil(4/2)=2`。08:02:28 观察到的长度是 7，一个 Pod 已就绪。08:02:33 四个 Pod 都就绪时长度已经是 4，那是新 Pod 各自 `BLPOP` 之后的数，不是这拍公式的输入。`usageRatio` 若按长度 7、当前副本 1 算，是 3.5，远在容差外面。
 
-HPA 的缩容稳定窗口默认 5 分钟。队列随后掉到 4、3、0，按公式期望会下降，但窗口里还留着刚才的建议 4。08:03:10 左右 HPA 的条件是 `AbleToScale=False`，reason `ScaleDownStabilized`，文案是 `recent recommendations were higher than current one, applying the highest recent recommendation`。所以这一分钟里 HPA 没有把 4 收成 2 或 1。
+同一个 ReplicaSet 从 1 扩到 4。另外三个 Pod `dcx9r`、`ksgf9`、`xhzq8` 也在 `k8s-lab-worker` 上。
 
-## 7. 消费者自己取订单
+## 5. 回到 0：冷却、稳定窗口、HPA 停手
 
-KEDA 把副本数写完就离开这条链路。四个容器各自连 `redis.keda-redis-demo.svc.cluster.local`，`BLPOP` 取出订单。日志里是 `processing order-8` 这样的行，八个编号都出现了。每个 Pod 两条。取走一条就睡 20 秒，所以第二轮取完时队列已经是 0，Pod 还在睡。
+四个 Pod 继续 `BLPOP`。睡 20 秒是清单里的，为的是 HPA 采样时队列还在。KEDA 看不到订单正文，也看不到这次睡眠。它下一拍只看见 `LLEN`。
 
-睡的过程中 operator 把副本写成 0。ReplicaSet 删除 Pod，kubelet 发出 `Killing`。正在睡的进程收到 `SIGTERM`。这次处理时间只有 20 秒，grace period 够用。
+长度回到 0 之后，scale loop 走进「不活跃，当前副本大于 0，min 是 0」，调用 `scaleToZeroOrIdle`。冷却从最近一次活跃算起，不是从 08:02:26 那次写成 1 算起。副本已经大于 0 且这一拍仍然活跃时，`RequestScale` 把 `LastActiveTime` 改成现在，副本不动。队列被判成不活跃之后，还要再等 `cooldownPeriod` 15 秒才写 0。等到之前 status 是 `ScalerCooldown`。08:02:59 副本仍是 4、队列是 0，就是这一态。08:03:06 才写 0。两次观察之间没有把每一拍的 `LastActiveTime` 打出来。
 
-## 8. 4 写成 0
+同一窗口里 HPA 若采到长度 0，裸的 desired 是 `ceil(0/2)=0`。`stabilizeRecommendation` 在默认 5 分钟里保留最近最高的建议，那是刚才的 4。条件是 `ScaleDownStabilized`，文案是 `recent recommendations were higher than current one, applying the highest recent recommendation`。它不会把 4 收成 2，也不会收成 1。
 
-长度掉到 0 之后，`GetMetricsAndActivity` 的第二个返回值是 false，因为 `0 > 0` 不成立。`RequestScale` 进入不活跃分支。当前副本大于 0，并且 `minReplicaCount` 是 0，于是调用 `scaleToZeroOrIdle`。
+窗口即使过了，HPA 也写不出 0。`minReplicas` 是 1，`convertDesiredReplicasWithRules` 会把小于 1 的建议夹成 1，reason `TooFewReplicas`。这次没等到那 5 分钟。
 
-冷却还没过时，条件是 `ScalerCooldown`。`cooldownPeriod` 这次是 15 秒。默认值在 `scale_executor.go` 里是 `5 * 60` 秒。首次冷却 `defaultInitialCooldownPeriod` 是 0。08:02:59 采样还是 `ScalerCooldown`，副本仍是 4。
-
-冷却结束，`updateScaleOnScaleTarget` 把副本写成 `minReplicaCount`。**4 回到 0 也是 operator 写的。** HPA 当时还停在 `ScaleDownStabilized`，没有把副本收成 2 或 1。
-
-08:03:06 的日志：
+08:03:06（UTC 00:03:06）冷却已过，operator 直接写 0：
 
 ```text
 Successfully set ScaleTarget replicas count to ScaledObject minReplicaCount
@@ -227,63 +167,128 @@ Original Replicas Count 4
 New Replicas Count 0
 ```
 
-事件是 `KEDAScaleTargetDeactivated`：`Deactivated apps/v1.Deployment keda-redis-demo/order-worker from 4 to 0`。
+事件 `KEDAScaleTargetDeactivated`：`Deactivated apps/v1.Deployment keda-redis-demo/order-worker from 4 to 0`。ReplicaSet 从 4 收到 0。kubelet 对四个 Pod 发了 `Killing`。正在睡的进程收到 `SIGTERM`。
 
-副本变成 0 之后，HPA 下一轮看到 `currentReplicas == 0`。`minReplicas` 是 1，而且这次没有打开 HPA 自己的 scale-to-zero。这一轮停止改 scale，并把 `ScalingActive` 标成 False，原因 `ScalingDisabled`。08:03:40 的 HPA 已经是这个状态，`TARGETS` 显示 `<unknown>/2 (avg)`，`REPLICAS` 是 0。ScaledObject 的 `HPAActive` 回到 `ScalingDisabled`，状态仍是 True。
+HPA 停手的条件是它这一拍读到的副本已经是 0。读到 0 就再次 `ScalingDisabled`，`rescale = false`，不会把稳定窗口里的 4 写回去。08:03:40 观察到的就是这个结果：`REPLICAS` 0，`TARGETS` `<unknown>/2 (avg)`，`ScalingActive=False` reason `ScalingDisabled`。
+
+有一个缝。HPA 如果在 operator 写 0 之前已经把 scale 对象读进内存，这次 Update 仍可能把副本写回 4。这次观察里没有发生。若发生了，下一拍 scale loop 会再写 0：冷却已经过了，不活跃且副本大于 0 仍走 `scaleToZeroOrIdle`。停手要等某一次 HPA 的 Get 看见 0。
+
+## 6. 这 8 笔订单对上哪一拍
+
+Redis 在 kind 网络上，这次地址 `172.20.0.4`。没有 selector 的 Service 把 `redis.keda-redis-demo.svc.cluster.local:6379` 指到它。
+
+| 字段 | 这次 | 默认 | 在上面哪一拍起作用 |
+|---|---|---|---|
+| `minReplicaCount` | 0 | 未设置也按 0 | 让「写 0」成立；同时把 HPA min 固定成 1 |
+| `maxReplicaCount` | 4 | — | 只进 HPA max。从 1 扩容时，单次上限也是 4 |
+| `listLength` | `"2"` | — | 只进 HPA 的 `averageValue`。operator 从 0 拉起时不用它 |
+| `activationListLength` | `"0"` | — | `listLen > 0` 才算活跃 |
+| `pollingInterval` | 5 秒 | 30 秒 | scale loop 的周期。第一拍不等 |
+| `cooldownPeriod` | 15 秒 | 300 秒 | 最后一次活跃之后多久才允许写 0 |
+| `initialCooldownPeriod` | 0 | 0 | 还没有 `LastActiveTime` 时用。这次激活之后用的是上一行 |
+
+时刻是 +0800。
+
+| 时刻 | 副本 | 队列 | 这一拍 |
+|---|---|---|---|
+| 08:02:22 | 0 | 8 | 刚 `LPUSH`。scale loop 还没跑到。HPA 处于 `ScalingDisabled`，不查指标 |
+| 08:02:26 | 0 → 1 | | 活跃且副本是 0。operator 写 1，个数与长度无关 |
+| 08:02:28 | 1 就绪 | 7 | 第一个 Pod 已取走一条。副本已经离开 0，之后的活跃拍只改 `LastActiveTime` |
+| 08:02:33 | 1 → 4 | HPA 用的是 7 或 8 | HPA `ceil(长度/2)=4`。四个 Pod 就绪之后，观察到的长度是 4 |
+| 08:02:59 | 4 | 0 | `ScalerCooldown`。HPA 把建议按在 4 |
+| 08:03:06 | 4 → 0 | 0 | 冷却结束。operator 写 `minReplicaCount` |
+| 08:03:40 | 0 | 0 | 谁也不写。HPA 读到 0，回到 `ScalingDisabled` |
+
+八条都被取走，每个 Pod 两条。写这篇时仍是空闲：Deployment `0/0`，`LLEN orders` 是 0，ScaledObject `Ready=True`、`Active=False`（`ScalerNotActive`）、`Fallback=False`、`Paused=False`、`HPAActive=True` reason `ScalingDisabled`。
+
+刚创建 Service 的那一秒，EndpointSlice 已经在，kube-proxy 还没装上规则。operator 日志是 `failed to dial after 5 attempts: dial tcp 10.96.206.94:6379: connect: connection refused`。这走第 2 节的错误分支：不改副本，Ready 会是 `TriggerError`。下一轮 `PING` 和 `LLEN` 通了。空队列是 `ScalerNotActive`，不是这条错误。
+
+## 7. 轮询开始之前
+
+`kubectl apply` 先过 webhook `vscaledobject.kb.io`，对象进 etcd。`ScaledObjectReconciler.Reconcile` 不看队列长度。08:00:15（UTC 00:00:15）它做完这些，scale loop 才有东西可跑：
+
+1. 盖上 finalizer `finalizer.keda.sh`。日志是 `Adding Finalizer for the ScaledObject`，紧跟着 `prefer a domain-qualified finalizer name including a path (/)`。对象上的名字仍然不带 `/`。删除时，只有 `advanced.restoreToOriginalReplicaCount: true` 才会把副本写回 `status.originalReplicaCount`。这次没开，删对象不会把副本恢复成创建前的数。
+2. 补上标签 `scaledobject.keda.sh/name=order-worker`。Metrics Adapter 靠它把 HPA 的查询对上这个对象。
+3. 确认 Deployment 有 `/scale`。日志是 `Detected resource targeted for scaling`，资源 `apps/v1.Deployment`，名字 `order-worker`。
+4. `Creating a new HPA`，名字 `keda-hpa-order-worker`。默认是 `keda-hpa-` 加上 ScaledObject 的名字。ownerReference 指向这个 ScaledObject，`controller: true`。
+5. HPA 是新建的，于是 `requestScaleLoop`。事件是 `Scaler redis is built` 和 `Started scalers watch`。
+
+造出来的 HPA spec：
+
+| 字段 | 值 | 从哪来 |
+|---|---|---|
+| `scaleTargetRef` | `apps/v1` Deployment `order-worker` | `scaleTargetRef` |
+| `minReplicas` | 1 | `GetHPAMinReplicas`。ScaledObject 的 0 映射成 1 |
+| `maxReplicas` | 4 | `maxReplicaCount` |
+| 指标 | External `s0-redis-orders`，`AverageValue` `"2"` | trigger 下标 0，`listLength` |
+| 选择器 | `scaledobject.keda.sh/name=order-worker` | 第 2 步的标签 |
+| `behavior` | 空 | 用 Kubernetes 默认：同步 15 秒，缩容稳定窗口 5 分钟，容差 0.1，单次扩容上限 `max(2 × 当前副本, 4)` |
+
+暂停注解走 reconcile，不走这次的热路径。`autoscaling.keda.sh/paused` 或 `paused-replicas` 会停掉 scale loop 并删掉 HPA。`paused-scale-in` / `paused-scale-out` 只把 HPA 对应方向的 `selectPolicy` 设成 Disabled，loop 还在。这次缩到 0 没有这些注解。
+
+## 8. 三个进程
+
+![operator 轮询 LLEN，自己把副本从 0 写成 1；HPA 经外部指标写成 N。Redis 在 kind 集群外面。](./assets/keda-architecture.svg)
+
+| 进程 | 在这条路径上的位置 |
+|---|---|
+| `keda-operator` | reconcile、scale loop、Redis scaler、`/scale` 的 0 边界、gRPC `:9666` |
+| `keda-operator-metrics-apiserver` | 把 HPA 的外部指标查询转成对 leader 的 gRPC。不连 Redis |
+| `keda-admission-webhooks` | 对象进 etcd 之前校验 ScaledObject |
+| kube-controller-manager 里的 HPA | 副本大于 0 时写 1 到 N |
+| 消费者 Pod | 自己 `BLPOP`。不在 KEDA 的调用链上 |
+
+Lease `operator.keda.sh` 在命名空间 `keda`。写这篇时持有者是 `keda-operator-797ff8c54-6pcpj_107bfee0-2a57-482b-8241-0aa142185f67`。
+
+APIService `v1beta1.external.metrics.k8s.io` 的 Available 是 True，后端是 `keda-operator-metrics-apiserver`。
+
+ValidatingWebhookConfiguration `keda-admission` 上有六个 webhook：`vscaledobject.kb.io`、`vscaledjob.kb.io`、`vstriggerauthentication.kb.io`、`vsclustertriggerauthentication.kb.io`、`vcloudeventsource.kb.io`、`vclustercloudeventsource.kb.io`。这次只用了第一个。
+
+装上的 CRD 是 `scaledobjects.keda.sh`、`scaledjobs.keda.sh`、`triggerauthentications.keda.sh`、`clustertriggerauthentications.keda.sh`、`cloudeventsources.eventing.keda.sh`、`clustercloudeventsources.eventing.keda.sh`。这次只有 ScaledObject `order-worker`。
 
 ## 9. 边界
 
-KEDA 改的是带 `/scale` 子资源的对象的副本数。它不创建 Pod，不选节点，不安装 iptables 或 ipvs，也不从 Redis 里把消息取走。
+`ScaledJob` 是另一类对象。它按事件创建 Job，没有一个长期 Deployment 给 HPA 去调。scale loop 对它走 `RequestJobScale`，不造 HPA。这次没建。
 
-下面几件事这次没走，读的时候不要和这条链路叠在一起：
+外置 scaler 是另一个 trigger 类型：一个独立进程用 gRPC 把指标交给 operator。`type: redis` 的客户端就在 operator 进程里。
 
-- **外置 scaler。** `type: redis` 是 operator 进程里的 Go 对象。另有一种独立进程，用 gRPC 把外部指标交给 KEDA。这次没有部署那个进程。
-- **HTTP add-on。** 这次没有安装。HTTP 请求要先变成 Redis、队列或别的指标，才会进入这条链路。KEDA 核心没有一个按请求把 Pod 拉起来再把请求转进去的入口。
-- **多个 trigger。** 一个 ScaledObject 可以挂多个 trigger。HPA 对每个外部指标各算一个期望副本，取最大的那个。这次只有 Redis 一个 trigger。
-- **`ScaledJob`。** 长任务如果不能接受缩容时被删掉，用 `ScaledJob`。它按事件创建 Job，做完就结束。这次没有建这个对象。缩到 0 时，正在睡的 Pod 被删了。
-- **暂停注解。** `autoscaling.keda.sh/paused` 或 `autoscaling.keda.sh/paused-replicas` 会让 `Reconcile` 停掉 scale loop，并删掉 HPA。那是另一条路径。这次缩到 0 没有打这些注解。
-- **`TriggerAuthentication`。** Redis 没有密码，所以没有这个对象。
-- **HPA 自己的 scale-to-zero。** 没有打开。所以副本已经是 0 时，HPA 进入 `ScalingDisabled`，不会把副本从 0 拉起来。从 0 拉到 1 的是 operator。
+CPU / 内存 trigger 单独存在时不能作为从 0 拉起的信号，因为副本是 0 就没有用量。`getScaledObjectState` 在全部 trigger 都是 cpu 或 memory、且没有错误时，把 `isActive` 强制成 true。这次只有 Redis，不走这句。
+
+Fallback 是 scaler 持续报错时把副本收到一个固定数。没配的话，报错只把 Ready 标成 False，副本留在原地。这次空队列是合法的 `LLEN 0`。
+
+HTTP add-on 不在这次安装里。核心控制器没有一个按 HTTP 请求把 Pod 拉起来再把请求转进去的数据面。订单先进 Redis，KEDA 只看见长度。
 
 ## 10. 源码索引
 
-KEDA 路径相对于 tag `v2.21.0`。Kubernetes 的三条在本地 `kubernetes` 检出里。
+KEDA 路径相对于 tag `v2.21.0`。HPA 的四条在本地 `kubernetes` 检出里。
 
 | 位置 | 作用 |
 |---|---|
-| `cmd/operator/main.go` | 控制器进程、选主 id `operator.keda.sh`、gRPC 绑在 `:9666` |
-| `cmd/adapter/main.go` | 外部指标适配器，默认连 `keda-operator` 的 9666 |
-| `cmd/webhooks/main.go` | admission webhook 进程 |
-| `controllers/keda/scaledobject_controller.go` | `Reconcile`、finalizer、确认 `/scale`、创建 HPA |
-| `controllers/keda/scaledobject_finalizer.go` | finalizer 字符串 `finalizer.keda.sh` |
-| `controllers/keda/hpa.go` | 组装 HPA spec |
-| `apis/keda/v1alpha1/scaledobject_types.go` | `GetHPAMinReplicas`，0 映射成 1 |
-| `apis/keda/v1alpha1/withtriggers_types.go` | `defaultPollingInterval = 30` |
-| `pkg/scaling/scale_handler.go` | `startScaleLoop`、`GetScaledObjectMetrics` |
-| `pkg/scaling/executor/scale_scaledobjects.go` | `RequestScale`、`scaleFromZeroOrIdle`、`scaleToZeroOrIdle`、`getHPAHealth` |
+| `pkg/scaling/scale_handler.go` | `startScaleLoop` 先查再等；`checkScalers`；`getScaledObjectState`；`handleResult` 只 patch status |
+| `pkg/scaling/executor/scale_scaledobjects.go` | `RequestScale` 的分支；`scaleFromZeroOrIdle` 写 1；`scaleToZeroOrIdle` 冷却后写 0；`updateScaleOnScaleTarget`；`getHPAHealth` |
 | `pkg/scaling/executor/scale_executor.go` | 默认冷却 300 秒，首次冷却 0 |
-| `pkg/metricsservice/server.go` | gRPC `GetMetrics`，`NeedLeaderElection` 返回 true |
-| `pkg/provider/provider.go` | 把 HPA 的外部指标查询转成 gRPC |
-| `pkg/scalers/redis_scaler.go` | Lua `TYPE` + `LLEN`，`listLen > activationListLength` |
-| `pkg/scalers/scaler.go` | 默认 `AverageValue`，`GenerateMetricNameWithIndex` |
-| `pkg/controller/podautoscaler/horizontal.go` | 副本为 0 时写 `ScalingDisabled`；缩容稳定窗口 |
-| `pkg/controller/podautoscaler/replica_calculator.go` | `GetExternalPerPodMetricReplicas`，`ceil(指标 / 目标)` |
-| `pkg/controller/podautoscaler/config/v1alpha1/defaults.go` | 同步周期 15 秒，缩容稳定窗口 5 分钟 |
+| `pkg/scalers/redis_scaler.go` | Lua；`listLen > activationListLength` |
+| `pkg/scalers/scaler.go` | 默认 `AverageValue`；指标名 `s%d-%s`；`GenerateMetricInMili` 把长度收成三位小数量 |
+| `controllers/keda/scaledobject_controller.go` | `Reconcile`。暂停时停 loop 并删 HPA |
+| `controllers/keda/hpa.go` | `newHPAForScaledObject`；默认名 `keda-hpa-<name>` |
+| `controllers/keda/scaledobject_finalizer.go` | `finalizer.keda.sh`。只有打开 restore 才写回原副本 |
+| `apis/keda/v1alpha1/scaledobject_types.go` | `GetHPAMinReplicas`；`IsPollingIntervalRelevant`；`UsesHPAObservations` |
+| `pkg/metricsservice/server.go` | gRPC `GetMetrics`，只在 leader 上启动 |
+| `pkg/provider/provider.go` | HPA 查询转成 gRPC。选择器是 `scaledobject.keda.sh/name` |
+| `pkg/controller/podautoscaler/horizontal.go` | 副本为 0 时 `ScalingDisabled` 且不算指标；`stabilizeRecommendation`；`convertDesiredReplicasWithRules` |
+| `pkg/controller/podautoscaler/replica_calculator.go` | `GetExternalPerPodMetricReplicas`，`ceil(usage / targetPerPod)` |
+| `pkg/controller/podautoscaler/config/v1alpha1/defaults.go` | 同步周期 15 秒，缩容稳定窗口 5 分钟，容差 0.1 |
 
 ## 11. 观察命令
 
-都带 `--context kind-k8s-lab`，不改当前 context。
-
 ```bash
-kubectl --context kind-k8s-lab -n keda get deploy
-kubectl --context kind-k8s-lab get apiservice v1beta1.external.metrics.k8s.io
-kubectl --context kind-k8s-lab -n keda get lease operator.keda.sh
-kubectl --context kind-k8s-lab -n keda-redis-demo get deploy,scaledobject,hpa
 kubectl --context kind-k8s-lab -n keda-redis-demo describe scaledobject order-worker
 kubectl --context kind-k8s-lab -n keda-redis-demo describe hpa keda-hpa-order-worker
+kubectl --context kind-k8s-lab -n keda logs deploy/keda-operator | rg 'ScaleTarget|Reconciling|Finalizer'
+kubectl --context kind-k8s-lab -n keda get lease operator.keda.sh
 ```
 
-队列长度看 Docker 里的 Redis，不看 KEDA：
+队列长度在 Redis 里：
 
 ```bash
 export DOCKER=/Applications/Docker.app/Contents/Resources/bin/docker

@@ -6,7 +6,7 @@ GitHub：https://github.com/forrestIsRunning/keda-lab 。本地目录：`~/Proje
 
 | 笔记 | 本机跑到哪 |
 |---|---|
-| [redis-list-path.md](./redis-list-path.md) | 2026-10-10 08:02，8 笔订单，副本 0 → 1 → 4 → 0。架构图在这篇里 |
+| [redis-list-path.md](./redis-list-path.md) | 2026-10-10 08:02，8 笔订单。scale 循环怎样把 0、1、N 写进 `/scale`。架构图在这篇里 |
 
 这套 kind 集群同时跑着 [sandbox-lab](https://github.com/forrestIsRunning/sandbox-lab)。context 仍是 `kind-k8s-lab`。不要新建集群，也不要 `kubectl config use-context`。下面的命令都带 `--context` 或 `--kube-context`。
 
@@ -105,4 +105,4 @@ export DOCKER=/Applications/Docker.app/Contents/Resources/bin/docker
   order-1 order-2 order-3 order-4 order-5 order-6 order-7 order-8
 ```
 
-随后副本走到 4，再回到 0。时间线和每次是谁写的 scale，见 [redis-list-path.md](./redis-list-path.md)。
+随后副本走到 4，再回到 0。operator 和 HPA 怎样轮流写 `/scale`，见 [redis-list-path.md](./redis-list-path.md)。
